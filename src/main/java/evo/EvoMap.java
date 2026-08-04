@@ -4,20 +4,72 @@ import java.io.*;
 import java.lang.reflect.*;
 import java.util.*;
 
-/** Reflection mapper: user records/POJOs <-> codec value tree. Zero deps. */
+/**
+ * A reflection mapper that serializes user objects (records, POJOs, enums)
+ * on top of the {@link Evo} codec.
+ *
+ * <h2>Paradigm</h2>
+ * {@code EvoMap} has <b>no wire format of its own</b>. It converts an object
+ * into the codec's primitive value tree — a {@code Map<String,Object>} keyed by
+ * field name, with nested objects, lists, and maps converted recursively — and
+ * hands that to {@link Evo#write}. Reading reverses the process, guided by the
+ * declared target type. So a {@code record Person(int age, String name)} is on
+ * the wire exactly as the map {@code {"age":…, "name":…}}.
+ *
+ * <p>Keying by <b>field name</b> (not position) is what gives free schema
+ * evolution: adding a field appends a map entry that old readers ignore;
+ * dropping a field omits an entry that readers default. No wire-format change.
+ *
+ * <h2>What it maps</h2>
+ * Leaves (primitives, wrappers, {@code String}, {@code byte[]}) pass straight
+ * through. Enums are stored by {@code name()} and restored via
+ * {@code Enum.valueOf}. Records use their canonical constructor; POJOs need a
+ * no-arg constructor and non-final fields. Nested element/value types are
+ * discovered from declared generics, so <b>no class names appear on the
+ * wire</b> and no {@code Class.forName} is used.
+ *
+ * <h2>Limits (by design)</h2>
+ * No polymorphism (a field decodes as its declared type), no cyclic object
+ * graphs, declared fields only (no inherited POJO fields), and raw/wildcard
+ * generics decode as plain codec values. See {@code docs/adding-types.md}.
+ *
+ * <h2>Usage</h2>
+ * <pre>
+ *   EvoMap.writeObject(out, person);
+ *   Person p = EvoMap.readObject(in, Person.class);
+ * </pre>
+ * All methods are static; the class is not instantiable.
+ */
 public final class EvoMap {
     private EvoMap() {}
 
+    /**
+     * Serialize {@code obj} by converting it to the codec value tree
+     * ({@link #toValue}) and writing that with {@link Evo#write}.
+     */
     public static void writeObject(OutputStream out, Object obj) throws IOException {
         Evo.write(out, toValue(obj));
     }
 
+    /**
+     * Read one value with {@link Evo#read} and reconstruct an instance of
+     * {@code type} from it ({@link #fromValue}). The target type drives nested
+     * type resolution, so no type information is needed on the wire.
+     *
+     * @param type the class to reconstruct (record, POJO, enum, or a leaf type)
+     * @return the reconstructed object, cast to {@code T} (may be {@code null})
+     */
     public static <T> T readObject(InputStream in, Class<T> type) throws IOException {
         Object v = Evo.read(in);
         return type.cast(fromValue(v, type));
     }
 
-    // ---- object -> codec value tree ----
+    /**
+     * Convert an arbitrary object into the codec's value tree (primitives,
+     * {@code String}, {@code byte[]}, {@code List}, {@code Map}, or {@code null}).
+     * Leaves pass through; enums become their name; lists/maps and record/POJO
+     * fields recurse. Records and POJOs become a name-keyed {@code LinkedHashMap}.
+     */
     static Object toValue(Object o) {
         if (o == null) return null;
         Class<?> c = o.getClass();
@@ -50,7 +102,16 @@ public final class EvoMap {
         return out;
     }
 
-    // ---- codec value tree -> object of declared type t ----
+    /**
+     * Reconstruct an object of declared type {@code t} from a codec value tree.
+     * Handles, in order: null; raw/wildcard generics (returned as-is); leaves;
+     * enums; {@code List}/{@code Map} (recursing per declared element/value
+     * type); and finally records (via canonical constructor) or POJOs (via
+     * no-arg constructor + field injection).
+     *
+     * @param v the codec value (from {@link Evo#read})
+     * @param t the declared target type, carrying generics for element resolution
+     */
     static Object fromValue(Object v, Type t) {
         if (v == null) return null;
         Class<?> raw = rawClass(t);
@@ -82,6 +143,12 @@ public final class EvoMap {
         return raw.isRecord() ? buildRecord(raw, m) : buildPojo(raw, m);
     }
 
+    /**
+     * Build a record from a name-keyed map using its canonical constructor.
+     * Each component is resolved from the map by name; a missing component gets
+     * {@link #defaultFor} its declared type (primitive zero/false, else null),
+     * which is how a record reads back from data that predates one of its fields.
+     */
     private static Object buildRecord(Class<?> raw, Map<?, ?> m) {
         RecordComponent[] comps = raw.getRecordComponents();
         Class<?>[] types = new Class<?>[comps.length];
@@ -101,6 +168,12 @@ public final class EvoMap {
         }
     }
 
+    /**
+     * Build a POJO via its no-arg constructor, then inject declared non-static,
+     * non-transient fields present in the map. Fields absent from the map keep
+     * their constructor default. Requires a no-arg constructor and non-final
+     * fields; otherwise throws {@link IllegalStateException}.
+     */
     private static Object buildPojo(Class<?> raw, Map<?, ?> m) {
         try {
             Constructor<?> ctor = raw.getDeclaredConstructor();
@@ -120,7 +193,13 @@ public final class EvoMap {
         }
     }
 
-    // ---- helpers ----
+    /**
+     * True if {@code c} is a type the codec handles directly (a primitive, a
+     * primitive wrapper, {@code String}, or {@code byte[]}). Such values pass
+     * straight through instead of being reflected as a record/POJO. Extend this
+     * when adding a new codec type that can appear as an object field — see
+     * {@code docs/adding-types.md}.
+     */
     static boolean isLeaf(Class<?> c) {
         return c.isPrimitive()
             || c == Boolean.class || c == Character.class || c == Byte.class || c == Short.class
@@ -128,12 +207,23 @@ public final class EvoMap {
             || c == String.class || c == byte[].class;
     }
 
+    /**
+     * The erased {@link Class} of a reflective {@link Type}: the type itself if
+     * it is a {@code Class}, the raw type of a {@code ParameterizedType}, else
+     * {@code Object.class} (for wildcards, type variables, etc.).
+     */
     static Class<?> rawClass(Type t) {
         if (t instanceof Class<?> c) return c;
         if (t instanceof ParameterizedType p) return (Class<?>) p.getRawType();
         return Object.class;
     }
 
+    /**
+     * The {@code i}-th generic type argument of {@code t} (e.g. the element type
+     * of a {@code List<E>} or key/value type of a {@code Map<K,V>}), or
+     * {@code Object.class} when {@code t} is raw or the argument is a wildcard —
+     * in which case nested elements decode as plain codec values.
+     */
     static Type argOf(Type t, int i) {
         if (t instanceof ParameterizedType p) {
             Type[] a = p.getActualTypeArguments();
@@ -143,6 +233,11 @@ public final class EvoMap {
         return Object.class;
     }
 
+    /**
+     * The default value for a missing field of type {@code t}: the zero value
+     * for a primitive ({@code 0}/{@code false}/{@code '\0'}), else {@code null}.
+     * Lets a record's canonical constructor accept data that omits a field.
+     */
     static Object defaultFor(Class<?> t) {
         if (!t.isPrimitive()) return null;
         if (t == boolean.class) return false;
@@ -155,11 +250,13 @@ public final class EvoMap {
         return 0d; // double
     }
 
+    /** Invoke a record accessor, wrapping reflective failure as {@link IllegalStateException}. */
     private static Object invoke(Method mth, Object o) {
         try { return mth.invoke(o); }
         catch (ReflectiveOperationException e) { throw new IllegalStateException(e); }
     }
 
+    /** Read a field's value, wrapping reflective failure as {@link IllegalStateException}. */
     private static Object get(Field f, Object o) {
         try { return f.get(o); }
         catch (IllegalAccessException e) { throw new IllegalStateException(e); }
