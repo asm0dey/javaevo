@@ -98,6 +98,73 @@ public class EvoTest {
         check(m2.containsKey("c") && m2.get("c") == null, "map null value");
     }
 
+    // build a stream: unknown value with given tag+payload, then a known INT(99)
+    static ByteArrayInputStream unknownThen(int tag, byte[] payload) throws IOException {
+        var b = new ByteArrayOutputStream();
+        b.write(tag);
+        b.writeBytes(payload);
+        Evo.write(b, 99);   // known follow-up value
+        return new ByteArrayInputStream(b.toByteArray());
+    }
+
+    static byte[] varintBytes(long v) throws IOException {
+        var b = new ByteArrayOutputStream();
+        Evo.writeVarint(b, v);
+        return b.toByteArray();
+    }
+
+    static void testUnknownSkip() throws IOException {
+        // class 0 empty, unused id 0x1F
+        checkSkip(0x1F, new byte[0]);
+        // class 1 fixed1, id 0 -> tag 0x20, 1 payload byte
+        checkSkip(0x20, new byte[]{7});
+        // class 4 fixed8, unused id 0x1F -> tag 0x9F, 8 bytes
+        checkSkip(0x9F, new byte[]{1,2,3,4,5,6,7,8});
+        // class 5 varint, unused id 0x1F -> tag 0xBF
+        checkSkip(0xBF, varintBytes(123456));
+        // class 6 bytes, unused id 0x1F -> tag 0xDF, len-prefixed
+        var p = new ByteArrayOutputStream();
+        p.writeBytes(varintBytes(3)); p.writeBytes(new byte[]{9,9,9});
+        checkSkip(0xDF, p.toByteArray());
+    }
+
+    static void checkSkip(int tag, byte[] payload) throws IOException {
+        var in = unknownThen(tag, payload);
+        Object u = Evo.read(in);
+        check(u instanceof Evo.Unknown && ((Evo.Unknown) u).tag() == tag, "unknown tag " + tag);
+        check(Evo.read(in).equals(99), "stream in sync after unknown " + tag);
+    }
+
+    @SuppressWarnings("unchecked")
+    static void testUnknownNestedInMap() throws IOException {
+        // a MAP with one entry: key "k", value = unknown (class 6, tag 0xDF).
+        var b = new ByteArrayOutputStream();
+        b.write(Evo.MAP);
+        Evo.writeVarint(b, 1);          // 1 entry
+        Evo.write(b, "k");              // key
+        b.write(0xDF);                  // unknown value tag (class 6)
+        b.writeBytes(varintBytes(2)); b.writeBytes(new byte[]{5,6});
+        Evo.write(b, "after");          // next top-level value
+        var in = new ByteArrayInputStream(b.toByteArray());
+        var m = (Map<Object,Object>) Evo.read(in);
+        check(m.get("k") instanceof Evo.Unknown, "unknown as map value, no desync");
+        check(Evo.read(in).equals("after"), "top-level in sync after map with unknown");
+    }
+
+    static void testFraming() throws IOException {
+        var b = new ByteArrayOutputStream();
+        Evo.write(b, 1);
+        Evo.write(b, "two");
+        Evo.write(b, java.util.List.of(3));
+        var in = new ByteArrayInputStream(b.toByteArray());
+        check(Evo.read(in).equals(1), "frame 1");
+        check(Evo.read(in).equals("two"), "frame 2");
+        check(Evo.read(in).equals(java.util.List.of(3)), "frame 3");
+        boolean eof = false;
+        try { Evo.read(in); } catch (EOFException e) { eof = true; }
+        check(eof, "EOFException at end of stream");
+    }
+
     public static void main(String[] args) throws Exception {
         testVarint();
         testZigzag();
@@ -105,6 +172,9 @@ public class EvoTest {
         testScalars();
         testStringBytes();
         testCollections();
+        testUnknownSkip();
+        testUnknownNestedInMap();
+        testFraming();
         System.out.println("EvoTest OK (" + checks + " checks)");
     }
 }
