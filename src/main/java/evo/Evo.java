@@ -2,6 +2,7 @@ package evo;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.*;
 
 /** Zero-dependency self-describing binary codec. See design spec. */
 public final class Evo {
@@ -99,6 +100,21 @@ public final class Evo {
             out.write(b);
             return;
         }
+        if (v instanceof List<?> list) {
+            out.write(LIST);
+            writeVarint(out, list.size());
+            for (Object e : list) write(out, e);
+            return;
+        }
+        if (v instanceof Map<?, ?> map) {
+            out.write(MAP);
+            writeVarint(out, map.size());
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                write(out, e.getKey());
+                write(out, e.getValue());
+            }
+            return;
+        }
         throw new IllegalArgumentException("unsupported: " + v.getClass());
     }
 
@@ -118,6 +134,22 @@ public final class Evo {
             case DOUBLE: return Double.longBitsToDouble(readInt64(in));
             case STRING: return new String(readN(in, (int) readVarint(in)), StandardCharsets.UTF_8);
             case BYTES:  return readN(in, (int) readVarint(in));
+            case LIST: {
+                int n = (int) readVarint(in);
+                var l = new ArrayList<Object>(n);
+                for (int i = 0; i < n; i++) l.add(read(in));
+                return l;
+            }
+            case MAP: {
+                int n = (int) readVarint(in);
+                var m = new LinkedHashMap<Object, Object>();
+                for (int i = 0; i < n; i++) {
+                    Object k = read(in);
+                    Object val = read(in);
+                    m.put(k, val);
+                }
+                return m;
+            }
             default:     return skipUnknown(in, tag);
         }
     }

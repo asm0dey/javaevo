@@ -78,12 +78,33 @@ public class EvoTest {
         check(java.util.Arrays.equals((byte[]) roundtrip(new byte[0]), new byte[0]), "empty byte[]");
     }
 
+    @SuppressWarnings("unchecked")
+    static void testCollections() throws IOException {
+        var list = java.util.List.of(1, "two", 3.0, java.util.List.of((byte) 4));
+        Object rl = roundtrip(list);
+        check(rl.equals(list), "nested list");
+
+        var map = new java.util.LinkedHashMap<Object, Object>();
+        map.put("a", 1);
+        map.put("b", java.util.List.of("x", "y"));
+        map.put(null, "nullkey");           // null key survives
+        map.put("c", null);                 // null value survives
+        Object rm = roundtrip(map);
+        check(rm instanceof java.util.Map, "map type");
+        var m2 = (java.util.Map<Object, Object>) rm;
+        check(m2.get("a").equals(1), "map a");
+        check(m2.get("b").equals(java.util.List.of("x", "y")), "map b nested");
+        check(m2.get(null).equals("nullkey"), "map null key");
+        check(m2.containsKey("c") && m2.get("c") == null, "map null value");
+    }
+
     public static void main(String[] args) throws Exception {
         testVarint();
         testZigzag();
         testFixed();
         testScalars();
         testStringBytes();
+        testCollections();
         System.out.println("EvoTest OK (" + checks + " checks)");
     }
 }
