@@ -75,6 +75,47 @@ are wide at this setting — treat as directional, not precise.** Lower is bette
   and boxing helps, but far less than fixing reflection. The hand-written cost
   (no general mapper, no evolution safety) is usually not worth that last bit.
 
+## vs well-known formats
+
+`FormatBench` + `SizeReport` compare evo against Java native serialization,
+Jackson JSON, Jackson CBOR, and Kryo (all reflection / no codegen). Protobuf and
+Avro are excluded — they need a schema + codegen (a different, denser, faster
+category). Same 200×64 payload, short run, JDK 21.
+
+**Size** (bytes):
+
+| format | raw | gzipped |
+|---|--:|--:|
+| kryo | 18,556 | 2,665 |
+| java native | 23,988 | 3,501 |
+| cbor | 25,605 | 3,320 |
+| **evo** | **26,538** | **3,325** |
+| json | 33,205 | 4,219 |
+
+**Speed** (µs/op, lower is better):
+
+| format | serialize | deserialize |
+|---|--:|--:|
+| kryo | 23 | 15 |
+| cbor | 21 | 38 |
+| json | 35 | 41 |
+| java native | 38 | 55 |
+| **evo** | **93** | **101** |
+
+**Reading:** evo is the *slowest* here — ~3–5× behind Jackson-CBOR/Kryo, and
+slower than Java native. Its cost is the intermediate `Map<String,Object>` tree
+(`toValue` allocates + boxes, then serializes) plus `instanceof`-chain dispatch
+and byte-at-a-time IO; Jackson/Kryo stream object→bytes with cached serializers.
+On size, evo ≈ CBOR (both self-describing, field names repeated); Kryo is
+smallest, JSON largest; gzip nearly equalizes evo/cbor/java.
+
+evo's value is **not** speed or size — it is ~2 files, zero dependencies, schema
+evolution, and all Java types in one small package. Choose it when those matter
+more than throughput.
+
+Run: `java -jar target/benchmarks.jar FormatBench` and
+`java -cp target/benchmarks.jar evo.bench.SizeReport`.
+
 ## Caveats
 
 - Short-run error bars are large; for real decisions run the full harness

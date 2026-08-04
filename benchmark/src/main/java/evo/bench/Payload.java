@@ -1,14 +1,16 @@
 package evo.bench;
 
+import java.io.Serializable;
 import java.util.*;
 
 /** JaCoCo-ish coverage payload for the benchmarks. Deterministic (no RNG). */
 public final class Payload {
     private Payload() {}
 
-    public record ClassData(long classId, String name, byte[] probes, int hitCount) {}
+    // Serializable so the Java-native format can be benchmarked too.
+    public record ClassData(long classId, String name, byte[] probes, int hitCount) implements Serializable {}
 
-    public record Session(String id, long start, long dump, List<ClassData> classes) {}
+    public record Session(String id, long start, long dump, List<ClassData> classes) implements Serializable {}
 
     /** A session with {@code nClasses} classes, each carrying a {@code probeLen}-byte probe array. */
     public static Session sample(int nClasses, int probeLen) {
