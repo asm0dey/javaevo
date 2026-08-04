@@ -41,10 +41,38 @@ public class EvoTest {
         check(Evo.readInt64(in) == 0x0102030405060708L, "int64");
     }
 
+    static Object roundtrip(Object v) throws IOException {
+        var b = new ByteArrayOutputStream();
+        Evo.write(b, v);
+        return Evo.read(new ByteArrayInputStream(b.toByteArray()));
+    }
+
+    static void testScalars() throws IOException {
+        check(roundtrip(null) == null, "null");
+        check(roundtrip(true).equals(true), "true");
+        check(roundtrip(false).equals(false), "false");
+        check(roundtrip('Z').equals('Z'), "char");
+        check(roundtrip('€').equals('€'), "char unicode"); // euro sign
+        // exact type fidelity
+        Object bv = roundtrip((byte) -7);
+        check(bv instanceof Byte && bv.equals((byte) -7), "byte type+val");
+        Object sv = roundtrip((short) 30000);
+        check(sv instanceof Short && sv.equals((short) 30000), "short type+val");
+        Object iv = roundtrip(123456);
+        check(iv instanceof Integer && iv.equals(123456), "int type+val");
+        Object lv = roundtrip(Long.MIN_VALUE);
+        check(lv instanceof Long && lv.equals(Long.MIN_VALUE), "long type+val");
+        Object fv = roundtrip(3.5f);
+        check(fv instanceof Float && fv.equals(3.5f), "float type+val");
+        Object dv = roundtrip(-2.25d);
+        check(dv instanceof Double && dv.equals(-2.25d), "double type+val");
+    }
+
     public static void main(String[] args) throws Exception {
         testVarint();
         testZigzag();
         testFixed();
+        testScalars();
         System.out.println("EvoTest OK (" + checks + " checks)");
     }
 }

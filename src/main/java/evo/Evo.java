@@ -6,6 +6,18 @@ import java.io.*;
 public final class Evo {
     private Evo() {}
 
+    // tags: (sizeClass << 5) | typeId  — FROZEN, never renumber
+    static final int NULL = 0x00, FALSE = 0x01, TRUE = 0x02;   // class 0 empty
+    static final int CHAR = 0x40;                              // class 2 fixed2
+    static final int FLOAT = 0x60;                            // class 3 fixed4
+    static final int DOUBLE = 0x80;                           // class 4 fixed8
+    static final int BYTE = 0xA0, SHORT = 0xA1, INT = 0xA2, LONG = 0xA3; // class 5 varint
+    static final int STRING = 0xC0, BYTES = 0xC1;            // class 6 bytes
+    static final int LIST = 0xE0, MAP = 0xE1;               // class 7 values
+
+    /** Returned by read() for a tag whose type id is unknown to this reader. */
+    public record Unknown(int tag, byte[] raw) {}
+
     // ---- varint (unsigned LEB128) ----
     static void writeVarint(OutputStream o, long v) throws IOException {
         while ((v & ~0x7FL) != 0) {
@@ -61,5 +73,53 @@ public final class Evo {
         long r = 0;
         for (int i = 0; i < 8; i++) r = (r << 8) | read1(in);
         return r;
+    }
+
+    public static void write(OutputStream out, Object v) throws IOException {
+        if (v == null)               { out.write(NULL); return; }
+        if (v instanceof Boolean b)  { out.write(b ? TRUE : FALSE); return; }
+        if (v instanceof Character c){ out.write(CHAR); out.write(c >>> 8); out.write(c & 0xFF); return; }
+        if (v instanceof Byte b)     { out.write(BYTE);  writeVarint(out, zig(b)); return; }
+        if (v instanceof Short s)    { out.write(SHORT); writeVarint(out, zig(s)); return; }
+        if (v instanceof Integer i)  { out.write(INT);   writeVarint(out, zig(i)); return; }
+        if (v instanceof Long l)     { out.write(LONG);  writeVarint(out, zig(l)); return; }
+        if (v instanceof Float f)    { out.write(FLOAT);  writeInt32(out, Float.floatToIntBits(f)); return; }
+        if (v instanceof Double d)   { out.write(DOUBLE); writeInt64(out, Double.doubleToLongBits(d)); return; }
+        throw new IllegalArgumentException("unsupported: " + v.getClass());
+    }
+
+    public static Object read(InputStream in) throws IOException {
+        int tag = in.read();
+        if (tag < 0) throw new EOFException();
+        switch (tag) {
+            case NULL:   return null;
+            case FALSE:  return Boolean.FALSE;
+            case TRUE:   return Boolean.TRUE;
+            case CHAR:   return (char) ((read1(in) << 8) | read1(in));
+            case BYTE:   return (byte)  unzig(readVarint(in));
+            case SHORT:  return (short) unzig(readVarint(in));
+            case INT:    return (int)   unzig(readVarint(in));
+            case LONG:   return         unzig(readVarint(in));
+            case FLOAT:  return Float.intBitsToFloat(readInt32(in));
+            case DOUBLE: return Double.longBitsToDouble(readInt64(in));
+            default:     return skipUnknown(in, tag);
+        }
+    }
+
+    static Unknown skipUnknown(InputStream in, int tag) throws IOException {
+        int cls = (tag >> 5) & 7;
+        var raw = new ByteArrayOutputStream();
+        switch (cls) {
+            case 0: break;
+            case 1: raw.writeBytes(readN(in, 1)); break;
+            case 2: raw.writeBytes(readN(in, 2)); break;
+            case 3: raw.writeBytes(readN(in, 4)); break;
+            case 4: raw.writeBytes(readN(in, 8)); break;
+            case 5: { int x; do { x = read1(in); raw.write(x); } while ((x & 0x80) != 0); } break;
+            case 6: { long n = readVarint(in); raw.writeBytes(readN(in, (int) n)); } break;
+            case 7: { long n = readVarint(in); for (long i = 0; i < n; i++) read(in); } break;
+            default: throw new IOException("bad size class " + cls);
+        }
+        return new Unknown(tag, raw.toByteArray());
     }
 }
