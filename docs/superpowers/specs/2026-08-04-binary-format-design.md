@@ -87,6 +87,11 @@ Class 1 is intentionally left free for a future 1-byte type.
 - **List:** class 7, varint element count then that many encoded values.
 - **Map:** class 7, varint entry count then `key,value` pairs (2×count values).
   Reader builds a `LinkedHashMap` (preserves order, tolerates one null key).
+  **Caveat:** MAP's count is *entries* (so `2×count` nested values follow), which
+  does not match the generic class-7 skip rule below (skip = read count, then
+  skip that many *values*). MAP is safe only because it is a base type every
+  reader knows and always takes the explicit `2×count` read branch — it is a
+  grandfathered exception. See rule 3.
 
 ### Varint
 
@@ -225,7 +230,11 @@ Both safe, because records are Maps, not positional structs:
 3. **Skip contract frozen** — the 8 size-class skip rules never change. A new
    type MUST fit one of the four disciplines: fixed-width, single-varint,
    length-prefixed-bytes, or count-prefixed-values (class 1 `fixed1` is free for
-   a 1-byte type).
+   a 1-byte type). For class 7, count is the exact number of nested *values* —
+   a new class-7 type must prefix that value count, NOT an entry/pair count.
+   (MAP prefixes an entry count and is safe only because it is universally
+   known; do not mirror its framing for a new type or old readers silently
+   desync.)
 4. **Field names not recycled** — a retired field name is never reused for a
    different meaning.
 
