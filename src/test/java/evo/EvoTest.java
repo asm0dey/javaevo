@@ -118,6 +118,10 @@ public class EvoTest {
         checkSkip(0x1F, new byte[0]);
         // class 1 fixed1, id 0 -> tag 0x20, 1 payload byte
         checkSkip(0x20, new byte[]{7});
+        // class 2 fixed2, unused id 0x1F -> tag 0x5F, 2 bytes
+        checkSkip(0x5F, new byte[]{1,2});
+        // class 3 fixed4, unused id 0x1F -> tag 0x7F, 4 bytes
+        checkSkip(0x7F, new byte[]{1,2,3,4});
         // class 4 fixed8, unused id 0x1F -> tag 0x9F, 8 bytes
         checkSkip(0x9F, new byte[]{1,2,3,4,5,6,7,8});
         // class 5 varint, unused id 0x1F -> tag 0xBF
@@ -147,8 +151,21 @@ public class EvoTest {
         Evo.write(b, "after");          // next top-level value
         var in = new ByteArrayInputStream(b.toByteArray());
         var m = (Map<Object,Object>) Evo.read(in);
-        check(m.get("k") instanceof Evo.Unknown, "unknown as map value, no desync");
+        check(m.get("k") instanceof Evo.Unknown && ((Evo.Unknown) m.get("k")).tag() == 0xDF, "unknown as map value with correct tag, no desync");
         check(Evo.read(in).equals("after"), "top-level in sync after map with unknown");
+    }
+
+    static void testUnknownSkipValuesClass() throws IOException {
+        var b = new ByteArrayOutputStream();
+        b.write(0xFF);                       // class 7 (values), unused id 0x1F
+        Evo.writeVarint(b, 2);               // count = 2 nested values
+        Evo.write(b, 7);                     // nested value 1 (int)
+        Evo.write(b, "nested");              // nested value 2 (string)
+        Evo.write(b, 99);                    // known follow-up top-level value
+        var in = new ByteArrayInputStream(b.toByteArray());
+        Object u = Evo.read(in);
+        check(u instanceof Evo.Unknown && ((Evo.Unknown) u).tag() == 0xFF, "unknown class-7 tag skipped");
+        check(Evo.read(in).equals(99), "stream in sync after class-7 unknown (recursive skip)");
     }
 
     static void testFraming() throws IOException {
@@ -174,6 +191,7 @@ public class EvoTest {
         testCollections();
         testUnknownSkip();
         testUnknownNestedInMap();
+        testUnknownSkipValuesClass();
         testFraming();
         System.out.println("EvoTest OK (" + checks + " checks)");
     }
