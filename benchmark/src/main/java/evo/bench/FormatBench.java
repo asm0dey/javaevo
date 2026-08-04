@@ -16,7 +16,7 @@ import org.openjdk.jmh.annotations.*;
 @State(Scope.Thread)
 public class FormatBench {
 
-    @Param({"evo", "java", "json", "cbor", "kryo"})
+    @Param({"evo", "evostream", "java", "json", "cbor", "kryo"})
     public String format;
 
     @Param({"200"})

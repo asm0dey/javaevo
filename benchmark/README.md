@@ -96,11 +96,12 @@ category). Same 200×64 payload, short run, JDK 21.
 
 | format | serialize | deserialize |
 |---|--:|--:|
-| kryo | 23 | 15 |
-| cbor | 21 | 38 |
-| json | 35 | 41 |
+| kryo | 24 | 14 |
+| cbor | 18 | 36 |
+| json | 34 | 39 |
 | java native | 38 | 55 |
-| **evo** | **93** | **101** |
+| **evostream** (prototype) | **57** | **84** |
+| **evo** | **89** | **106** |
 
 **Reading:** evo is the *slowest* here — ~3–5× behind Jackson-CBOR/Kryo, and
 slower than Java native. Its cost is the intermediate `Map<String,Object>` tree
@@ -108,6 +109,26 @@ slower than Java native. Its cost is the intermediate `Map<String,Object>` tree
 and byte-at-a-time IO; Jackson/Kryo stream object→bytes with cached serializers.
 On size, evo ≈ CBOR (both self-describing, field names repeated); Kryo is
 smallest, JSON largest; gzip nearly equalizes evo/cbor/java.
+
+### Streaming-serializer prototype (`StreamingMapper`)
+
+`evostream` is a prototype cached streaming serializer: per-class compiled plan,
+cached field-name bytes, `MethodHandle` no-box field access, **no intermediate
+Map tree**. It emits byte-identical output to `EvoMap`.
+
+It buys a real **1.3–1.6×** (serialize 89→57, deserialize 106→84) — but is
+**still the slowest of the pack**. The floor is not the implementation, it is
+the **wire format**: self-describing means the field names are repeated for
+every instance (200×4 here), while native/Jackson write the schema/descriptor
+once. Removing that cost means going positional (no names) — which sacrifices
+schema evolution, evo's entire reason to exist.
+
+**Conclusion — do not graduate it into the library.** The win is modest, evo
+stays slowest regardless, and a general compiled-serializer engine (POJOs, all
+types, enums, nested collections) is a large amount of code that defeats the
+"~2 files, tiny" goal. If you need speed, use CBOR/Kryo. evo's lane is
+zero-dep + tiny + evolution, not throughput. The prototype stays here as
+evidence.
 
 evo's value is **not** speed or size — it is ~2 files, zero dependencies, schema
 evolution, and all Java types in one small package. Choose it when those matter
