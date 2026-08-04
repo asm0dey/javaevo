@@ -15,6 +15,16 @@ public class EvoMapTest {
     record Address(String city, int zip) {}
     record Person(int age, String name, Color color, Address address) {}
 
+    static class Point {          // POJO: no-arg ctor, non-final fields
+        int x;
+        int y;
+        String label;
+        Point() {}
+        Point(int x, int y, String label) { this.x = x; this.y = y; this.label = label; }
+    }
+
+    record Team(String name, List<Person> members, Map<String, Address> offices) {}
+
     static <T> T roundtrip(Object o, Class<T> type) throws IOException {
         var b = new ByteArrayOutputStream();
         EvoMap.writeObject(b, o);
@@ -37,10 +47,31 @@ public class EvoMapTest {
         check(r.address().city().equals("London"), "nested record field");
     }
 
+    static void testPojo() throws IOException {
+        var p = new Point(3, 4, "corner");
+        Point r = roundtrip(p, Point.class);
+        check(r.x == 3 && r.y == 4 && "corner".equals(r.label), "pojo fields");
+    }
+
+    static void testNestedCollections() throws IOException {
+        var team = new Team(
+            "core",
+            List.of(new Person(1, "A", Color.RED, new Address("NYC", 1)),
+                    new Person(2, "B", Color.GREEN, new Address("LA", 2))),
+            Map.of("hq", new Address("SF", 3)));
+        Team r = roundtrip(team, Team.class);
+        check(r.name().equals("core"), "team name");
+        check(r.members().size() == 2, "list<record> size");
+        check(r.members().get(0).name().equals("A"), "list<record> element field");
+        check(r.offices().get("hq").city().equals("SF"), "map<string,record> value");
+    }
+
     public static void main(String[] args) throws Exception {
         testScalarPassthrough();
         testEnum();
         testRecord();
+        testPojo();
+        testNestedCollections();
         System.out.println("EvoMapTest OK (" + checks + " checks)");
     }
 }
