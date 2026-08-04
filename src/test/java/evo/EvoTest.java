@@ -68,11 +68,22 @@ public class EvoTest {
         check(dv instanceof Double && dv.equals(-2.25d), "double type+val");
     }
 
+    static void testStringBytes() throws IOException {
+        check(roundtrip("").equals(""), "empty string");
+        check(roundtrip("hello").equals("hello"), "ascii string");
+        check(roundtrip("héllo €").equals("héllo €"), "utf8 string");
+        byte[] raw = {1, 2, 3, -1, 0, 127};
+        Object rb = roundtrip(raw);
+        check(rb instanceof byte[] && java.util.Arrays.equals((byte[]) rb, raw), "byte[]");
+        check(java.util.Arrays.equals((byte[]) roundtrip(new byte[0]), new byte[0]), "empty byte[]");
+    }
+
     public static void main(String[] args) throws Exception {
         testVarint();
         testZigzag();
         testFixed();
         testScalars();
+        testStringBytes();
         System.out.println("EvoTest OK (" + checks + " checks)");
     }
 }

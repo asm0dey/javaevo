@@ -1,6 +1,7 @@
 package evo;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 
 /** Zero-dependency self-describing binary codec. See design spec. */
 public final class Evo {
@@ -85,6 +86,19 @@ public final class Evo {
         if (v instanceof Long l)     { out.write(LONG);  writeVarint(out, zig(l)); return; }
         if (v instanceof Float f)    { out.write(FLOAT);  writeInt32(out, Float.floatToIntBits(f)); return; }
         if (v instanceof Double d)   { out.write(DOUBLE); writeInt64(out, Double.doubleToLongBits(d)); return; }
+        if (v instanceof String s) {
+            out.write(STRING);
+            byte[] b = s.getBytes(StandardCharsets.UTF_8);
+            writeVarint(out, b.length);
+            out.write(b);
+            return;
+        }
+        if (v instanceof byte[] b) {
+            out.write(BYTES);
+            writeVarint(out, b.length);
+            out.write(b);
+            return;
+        }
         throw new IllegalArgumentException("unsupported: " + v.getClass());
     }
 
@@ -102,6 +116,8 @@ public final class Evo {
             case LONG:   return         unzig(readVarint(in));
             case FLOAT:  return Float.intBitsToFloat(readInt32(in));
             case DOUBLE: return Double.longBitsToDouble(readInt64(in));
+            case STRING: return new String(readN(in, (int) readVarint(in)), StandardCharsets.UTF_8);
+            case BYTES:  return readN(in, (int) readVarint(in));
             default:     return skipUnknown(in, tag);
         }
     }
