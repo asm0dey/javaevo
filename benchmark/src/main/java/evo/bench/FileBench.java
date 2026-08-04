@@ -1,6 +1,8 @@
 package evo.bench;
 
+import evo.CachedEvoMap;
 import evo.EvoMap;
+import evo.Specialized;
 import evo.bench.Payload.Session;
 
 import java.io.*;
@@ -9,16 +11,24 @@ import java.util.concurrent.TimeUnit;
 import org.openjdk.jmh.annotations.*;
 
 /**
- * The buffering axis, measured where it actually matters: real file IO.
- * {@link evo.Evo} writes/reads a byte at a time, so an unbuffered
- * {@link FileOutputStream}/{@link FileInputStream} pays a syscall per byte;
- * wrapping in {@link BufferedOutputStream}/{@link BufferedInputStream} batches
- * them. Uses the baseline strategy — buffering is orthogonal to it.
+ * Full factorial over real file IO: strategy × buffered × {write, read}.
+ * This is the realistic path (the codec does byte-at-a-time IO, so buffering
+ * matters here). The fastest cell = the combination worth optimizing toward.
+ *
+ * <ul>
+ *   <li>strategy: baseline ({@link EvoMap}) / cached ({@link CachedEvoMap}) /
+ *       specialized ({@link Specialized})</li>
+ *   <li>buffered: raw {@link FileOutputStream} vs {@link BufferedOutputStream}</li>
+ * </ul>
+ * All strategies emit identical bytes, so read cells can share one primed file.
  */
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Thread)
 public class FileBench {
+
+    @Param({"baseline", "cached", "specialized"})
+    public String strategy;
 
     @Param({"false", "true"})
     public boolean buffered;
@@ -37,7 +47,10 @@ public class FileBench {
         session = Payload.sample(nClasses, probeLen);
         file = File.createTempFile("evo-bench", ".bin");
         file.deleteOnExit();
-        writeFile();   // prime the file so readFile has content
+        // prime the file (canonical bytes) so readFile has content for every cell
+        try (OutputStream fo = new FileOutputStream(file)) {
+            EvoMap.writeObject(fo, session);
+        }
     }
 
     @TearDown(Level.Trial)
@@ -49,7 +62,12 @@ public class FileBench {
     public void writeFile() throws IOException {
         try (OutputStream fo = new FileOutputStream(file);
              OutputStream o = buffered ? new BufferedOutputStream(fo) : fo) {
-            EvoMap.writeObject(o, session);
+            switch (strategy) {
+                case "baseline"    -> EvoMap.writeObject(o, session);
+                case "cached"      -> CachedEvoMap.writeObject(o, session);
+                case "specialized" -> Specialized.write(o, session);
+                default -> throw new IllegalStateException(strategy);
+            }
         }
     }
 
@@ -57,7 +75,12 @@ public class FileBench {
     public Session readFile() throws IOException {
         try (InputStream fi = new FileInputStream(file);
              InputStream in = buffered ? new BufferedInputStream(fi) : fi) {
-            return EvoMap.readObject(in, Session.class);
+            return switch (strategy) {
+                case "baseline"    -> EvoMap.readObject(in, Session.class);
+                case "cached"      -> CachedEvoMap.readObject(in, Session.class);
+                case "specialized" -> Specialized.read(in);
+                default -> throw new IllegalStateException(strategy);
+            };
         }
     }
 }

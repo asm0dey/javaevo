@@ -1,9 +1,11 @@
 package evo;
 
 import java.io.*;
+import java.nio.file.Path;
 import java.util.*;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class EvoMapTest {
@@ -99,5 +101,19 @@ public class EvoMapTest {
         var p = new Person(5, "NoAddr", Color.RED, null);   // null nested record
         Person r = roundtrip(p, Person.class);
         assertTrue(r.address() == null, "null nested object round-trips null");
+    }
+
+    @Test
+    void testFileHelpers(@TempDir Path dir) throws IOException {
+        var team = new Team(
+            "core",
+            List.of(new Person(1, "A", Color.RED, new Address("NYC", 1))),
+            Map.of("hq", new Address("SF", 3)));
+        Path f = dir.resolve("team.evo");
+        EvoMap.writeToFile(f, team);
+        Team r = EvoMap.readFromFile(f, Team.class);
+        assertTrue(r.name().equals("core"), "file round-trip name");
+        assertTrue(r.members().get(0).name().equals("A"), "file round-trip nested");
+        assertTrue(r.offices().get("hq").city().equals("SF"), "file round-trip map");
     }
 }

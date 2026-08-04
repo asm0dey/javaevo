@@ -29,9 +29,14 @@ Payload: a JaCoCo-ish `Session` of `nClasses` `ClassData` records, each with a
 
 | Strategy | Reflection | Value tree + boxing | Isolates |
 |---|---|---|---|
-| `baseline` (`EvoMap`) | per-call | yes | — |
-| `cached` (`CachedEvoMap`) | cached per class | yes | reflection-lookup cost |
+| `baseline` (`EvoMap`) | cached per class | yes | — |
+| `cached` (`CachedEvoMap`) | cached per class | yes | (now equivalent to baseline) |
 | `specialized` (`Specialized`) | none (hand-written) | no | value-tree + boxing cost |
+
+> **Note:** reflection caching was folded into `EvoMap` after this study
+> (it was the big, cheap win). So `baseline` and `cached` now share the same
+> approach and score alike; `CachedEvoMap` is kept as the historical A/B point.
+> The numbers below are from *before* the fold, when `baseline` was uncached.
 
 **Buffering** (`FileBench`, real temp file): baseline strategy, `@Param buffered`
 ∈ {false, true}. This is where buffering matters — the codec does byte-at-a-time

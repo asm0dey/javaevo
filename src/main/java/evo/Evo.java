@@ -194,6 +194,11 @@ public final class Evo {
      * structures of any depth are supported. A {@code null} is the NULL tag —
      * every position is nullable.
      *
+     * <p><b>Buffering:</b> this writes a byte at a time, so an unbuffered
+     * {@link FileOutputStream}/socket is many times slower — wrap such a target
+     * in a {@link BufferedOutputStream}. In-memory streams
+     * ({@link ByteArrayOutputStream}) need no wrapping.
+     *
      * @param out destination
      * @param v   one of: {@code null}, {@code Boolean}, {@code Byte},
      *            {@code Short}, {@code Character}, {@code Integer}, {@code Long},
@@ -248,6 +253,9 @@ public final class Evo {
      * when this throws {@link EOFException} at a clean value boundary. A tag
      * whose type id is unrecognized is skipped via its size class and returned
      * as an {@link Unknown} (forward compatibility).
+     *
+     * <p><b>Buffering:</b> wrap a file/socket {@code in} in a
+     * {@link BufferedInputStream} — the codec reads a byte at a time.
      *
      * @return the decoded value (may be {@code null}, or an {@link Unknown})
      * @throws EOFException at end of stream
