@@ -137,6 +137,17 @@ more than throughput.
 Run: `java -jar target/benchmarks.jar FormatBench` and
 `java -cp target/benchmarks.jar evo.bench.SizeReport`.
 
+## Byte-layout annotator
+
+`evo.Annotate` serializes a deep nested record and prints an annotated,
+byte-by-byte disassembly of the wire format (offsets, tags, decoded values,
+nesting). Edit its `sample()` to inspect your own shapes.
+
+```bash
+cd benchmark && mvn -q package
+java -cp target/benchmarks.jar evo.Annotate
+```
+
 ## Caveats
 
 - Short-run error bars are large; for real decisions run the full harness
