@@ -25,6 +25,9 @@ public class EvoMapTest {
 
     record Team(String name, List<Person> members, Map<String, Address> offices) {}
 
+    record V1(int age, String name) {}
+    record V2(int age, String name, String email) {}
+
     static <T> T roundtrip(Object o, Class<T> type) throws IOException {
         var b = new ByteArrayOutputStream();
         EvoMap.writeObject(b, o);
@@ -66,12 +69,41 @@ public class EvoMapTest {
         check(r.offices().get("hq").city().equals("SF"), "map<string,record> value");
     }
 
+    static void testEvolution() throws IOException {
+        // OLD data (V1) read by NEW code (V2): missing 'email' -> null
+        var b1 = new ByteArrayOutputStream();
+        EvoMap.writeObject(b1, new V1(20, "Old"));
+        V2 upgraded = EvoMap.readObject(new ByteArrayInputStream(b1.toByteArray()), V2.class);
+        check(upgraded.age() == 20 && upgraded.name().equals("Old"), "v1->v2 kept fields");
+        check(upgraded.email() == null, "v1->v2 missing field defaults null");
+
+        // NEW data (V2) read by OLD code (V1): extra 'email' ignored
+        var b2 = new ByteArrayOutputStream();
+        EvoMap.writeObject(b2, new V2(21, "New", "x@y.z"));
+        V1 downgraded = EvoMap.readObject(new ByteArrayInputStream(b2.toByteArray()), V1.class);
+        check(downgraded.age() == 21 && downgraded.name().equals("New"), "v2->v1 extra field ignored");
+
+        // missing primitive defaults to 0
+        var b3 = new ByteArrayOutputStream();
+        EvoMap.writeObject(b3, Map.of("name", "NoAge"));     // a map with only 'name'
+        V1 partial = EvoMap.readObject(new ByteArrayInputStream(b3.toByteArray()), V1.class);
+        check(partial.age() == 0 && partial.name().equals("NoAge"), "missing primitive -> 0");
+    }
+
+    static void testNullNested() throws IOException {
+        var p = new Person(5, "NoAddr", Color.RED, null);   // null nested record
+        Person r = roundtrip(p, Person.class);
+        check(r.address() == null, "null nested object round-trips null");
+    }
+
     public static void main(String[] args) throws Exception {
         testScalarPassthrough();
         testEnum();
         testRecord();
         testPojo();
         testNestedCollections();
+        testEvolution();
+        testNullNested();
         System.out.println("EvoMapTest OK (" + checks + " checks)");
     }
 }
