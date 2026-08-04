@@ -33,11 +33,19 @@ public final class Evo {
         long r = 0;
         int shift = 0, b;
         do {
+            if (shift >= 64) throw new IOException("varint too long");
             b = read1(in);
             r |= (long) (b & 0x7F) << shift;
             shift += 7;
         } while ((b & 0x80) != 0);
         return r;
+    }
+
+    /** Read a varint length/count, rejecting negative or oversized values (trust boundary). */
+    static int readLen(InputStream in) throws IOException {
+        long n = readVarint(in);
+        if (n < 0 || n > Integer.MAX_VALUE) throw new IOException("bad length/count: " + n);
+        return (int) n;
     }
 
     // ---- zigzag ----
@@ -132,16 +140,16 @@ public final class Evo {
             case LONG:   return         unzig(readVarint(in));
             case FLOAT:  return Float.intBitsToFloat(readInt32(in));
             case DOUBLE: return Double.longBitsToDouble(readInt64(in));
-            case STRING: return new String(readN(in, (int) readVarint(in)), StandardCharsets.UTF_8);
-            case BYTES:  return readN(in, (int) readVarint(in));
+            case STRING: return new String(readN(in, readLen(in)), StandardCharsets.UTF_8);
+            case BYTES:  return readN(in, readLen(in));
             case LIST: {
-                int n = (int) readVarint(in);
-                var l = new ArrayList<Object>(n);
+                int n = readLen(in);
+                var l = new ArrayList<Object>();
                 for (int i = 0; i < n; i++) l.add(read(in));
                 return l;
             }
             case MAP: {
-                int n = (int) readVarint(in);
+                int n = readLen(in);
                 var m = new LinkedHashMap<Object, Object>();
                 for (int i = 0; i < n; i++) {
                     Object k = read(in);
@@ -164,8 +172,8 @@ public final class Evo {
             case 3: raw.writeBytes(readN(in, 4)); break;
             case 4: raw.writeBytes(readN(in, 8)); break;
             case 5: { int x; do { x = read1(in); raw.write(x); } while ((x & 0x80) != 0); } break;
-            case 6: { long n = readVarint(in); raw.writeBytes(readN(in, (int) n)); } break;
-            case 7: { long n = readVarint(in); for (long i = 0; i < n; i++) read(in); } break;
+            case 6: { int n = readLen(in); raw.writeBytes(readN(in, n)); } break;
+            case 7: { int n = readLen(in); for (long i = 0; i < n; i++) read(in); } break;
             default: throw new IOException("bad size class " + cls);
         }
         return new Unknown(tag, raw.toByteArray());

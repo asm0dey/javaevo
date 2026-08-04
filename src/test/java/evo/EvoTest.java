@@ -10,12 +10,6 @@ public class EvoTest {
         checks++;
     }
 
-    static byte[] toBytes(long... vals) throws IOException {
-        var b = new ByteArrayOutputStream();
-        for (long v : vals) Evo.writeVarint(b, v);
-        return b.toByteArray();
-    }
-
     static void testVarint() throws IOException {
         long[] samples = {0, 1, 2, 127, 128, 300, 16384, Long.MAX_VALUE, -1L};
         var b = new ByteArrayOutputStream();
@@ -182,6 +176,28 @@ public class EvoTest {
         check(eof, "EOFException at end of stream");
     }
 
+    static void testMalformedLengthRejected() throws IOException {
+        // BYTES tag with a negative (high-bit) length varint must throw IOException, not crash
+        var b = new ByteArrayOutputStream();
+        b.write(Evo.BYTES);
+        Evo.writeVarint(b, -1L);            // 10-byte varint, > Integer.MAX_VALUE
+        var in = new ByteArrayInputStream(b.toByteArray());
+        boolean threw = false;
+        try { Evo.read(in); } catch (IOException e) { threw = true; }
+        check(threw, "malformed length rejected with IOException");
+    }
+
+    static void testOversizedVarintRejected() throws IOException {
+        // 11 continuation bytes -> varint too long
+        var b = new ByteArrayOutputStream();
+        for (int i = 0; i < 11; i++) b.write(0x80);
+        b.write(0x00);
+        var in = new ByteArrayInputStream(b.toByteArray());
+        boolean threw = false;
+        try { Evo.readVarint(in); } catch (IOException e) { threw = true; }
+        check(threw, "oversized varint rejected");
+    }
+
     public static void main(String[] args) throws Exception {
         testVarint();
         testZigzag();
@@ -193,6 +209,8 @@ public class EvoTest {
         testUnknownNestedInMap();
         testUnknownSkipValuesClass();
         testFraming();
+        testMalformedLengthRejected();
+        testOversizedVarintRejected();
         System.out.println("EvoTest OK (" + checks + " checks)");
     }
 }

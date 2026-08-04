@@ -57,9 +57,13 @@ public final class EvoMap {
         if (raw == Object.class) return v;               // raw/wildcard generics: leave as codec value
         if (isLeaf(raw)) return v;
         if (raw.isEnum()) {
-            @SuppressWarnings({"unchecked", "rawtypes"})
-            Object e = Enum.valueOf((Class) raw, (String) v);
-            return e;
+            try {
+                @SuppressWarnings({"unchecked", "rawtypes"})
+                Object e = Enum.valueOf((Class) raw, (String) v);
+                return e;
+            } catch (RuntimeException ex) {
+                throw new IllegalStateException("cannot decode enum " + raw + " from " + v, ex);
+            }
         }
         if (List.class.isAssignableFrom(raw)) {
             Type et = argOf(t, 0);
