@@ -74,9 +74,21 @@ public final class Evo {
     public record Unknown(int tag, byte[] raw) {}
 
     /**
-     * Write {@code v} as an unsigned LEB128 varint (7 payload bits per byte, low
-     * group first, high bit set while more bytes follow). Used for lengths,
-     * counts, and (after zigzag) the integer types.
+     * Write {@code v} as an unsigned LEB128 varint.
+     *
+     * <p><b>LEB128</b> = Little Endian Base 128: the number is written as
+     * base-128 "digits", least-significant first. Each output byte holds one
+     * digit — 7 value bits — plus a high continuation bit that is 1 while more
+     * bytes follow and 0 on the last byte. ("Base 128" describes the per-byte
+     * digit range, like base-16; it is <i>not</i> a fixed 128-bit width.)
+     *
+     * <p>The encoding is variable-length: a value takes only as many bytes as
+     * its magnitude needs — 0..127 in one byte, up to ten bytes for a full
+     * 64-bit value — which is why small numbers are cheap. Example: 300 →
+     * {@code AC 02} (0x2C | 0x02&lt;&lt;7).
+     *
+     * <p>Used for lengths, counts, and — after {@link #zig zigzag} — the
+     * integer types.
      *
      * @param o  destination
      * @param v  value, treated as unsigned 64-bit
