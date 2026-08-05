@@ -53,6 +53,10 @@ public final class EvoMap {
     private static final Map<Class<?>, RecordComponent[]> RECORD_COMPONENTS = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Field[]> POJO_FIELDS = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Constructor<?>> CONSTRUCTORS = new ConcurrentHashMap<>();
+    // Cached "has a no-arg constructor" predicate for the POJO write guard: the
+    // readability precondition (ADR-0008) is checked once per class, not per
+    // write, keeping the serialize hot path off an uncached reflective lookup.
+    private static final Map<Class<?>, Boolean> POJO_WRITABLE = new ConcurrentHashMap<>();
 
     /**
      * Serialize {@code obj} by converting it to the codec value tree
@@ -132,6 +136,10 @@ public final class EvoMap {
      * {@code String}, {@code byte[]}, {@code List}, {@code Map}, or {@code null}).
      * Leaves pass through; enums become their name; lists/maps and record/POJO
      * fields recurse. Records and POJOs become a name-keyed {@code LinkedHashMap}.
+     *
+     * @throws IllegalArgumentException if a POJO type is not round-trippable — it
+     *     has no accessible no-arg constructor or has inaccessible fields (e.g.
+     *     {@code java.util.UUID}); the message names the offending class. See ADR-0008.
      */
     static Object toValue(Object o) {
         if (o == null) return null;
@@ -163,16 +171,25 @@ public final class EvoMap {
         // POJO fallback — must be round-trippable: needs a no-arg constructor to
         // be readable and accessible fields to be writable. Otherwise fail with a
         // clean, named error instead of an opaque reflection exception or a silent
-        // partial write. See ADR-0008.
+        // partial write. See ADR-0008. The no-arg check is cached (POJO_WRITABLE)
+        // so it runs once per class, not per write.
+        if (!POJO_WRITABLE.computeIfAbsent(c, EvoMap::hasNoArgCtor))
+            throw new IllegalArgumentException("cannot map " + c.getName()
+                + "; use a record/List/Map or give it a no-arg constructor with accessible fields");
         try {
-            c.getDeclaredConstructor();                  // present? (readability precondition)
             var out = new LinkedHashMap<String, Object>();
             for (Field f : fields(c)) out.put(f.getName(), toValue(get(f, o)));  // fields() setAccessible may throw
             return out;
-        } catch (NoSuchMethodException | InaccessibleObjectException e) {
+        } catch (InaccessibleObjectException e) {        // inaccessible field — same clean, named error
             throw new IllegalArgumentException("cannot map " + c.getName()
                 + "; use a record/List/Map or give it a no-arg constructor with accessible fields", e);
         }
+    }
+
+    /** True if {@code c} has a no-arg constructor (the POJO readability precondition, ADR-0008). */
+    private static boolean hasNoArgCtor(Class<?> c) {
+        try { c.getDeclaredConstructor(); return true; }
+        catch (NoSuchMethodException e) { return false; }
     }
 
     /**
