@@ -168,7 +168,10 @@ wire:
 - `List<Address>` / `Map<String,Address>` → element/value type read from the
   generic signature → recurse per element.
 - **Enum** field → stored as the constant **name** string; read via
-  `Enum.valueOf(type, name)`. Appending enum constants is evolution-safe.
+  `Enum.valueOf(type, name)`. **Not forward-safe:** an old reader whose enum
+  lacks a name written by a newer writer throws `IllegalStateException` and the
+  whole `readObject` fails — adding an enum constant is a *breaking* change for
+  any field that can reach an old reader. See [ADR-0002](../../adr/0002-unknown-enum-constant.md).
 - Leaf fields (primitives, String, byte[]) → straight to the codec.
 
 ### Read-time field resolution
@@ -237,6 +240,10 @@ Both safe, because records are Maps, not positional structs:
    desync.)
 4. **Field names not recycled** — a retired field name is never reused for a
    different meaning.
+5. **Field types frozen** — never change the declared type of an existing field
+   (no numeric coercion exists on read, so `int`→`long` old data throws). To
+   change a type, add a new field and drop the old. See
+   [ADR-0003](../../adr/0003-field-types-frozen.md).
 
 ### Not covered by the format (caller's job)
 

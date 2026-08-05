@@ -28,6 +28,9 @@ public class EvoMapTest {
     record V1(int age, String name) {}
     record V2(int age, String name, String email) {}
 
+    record Arrays1(int[] xs, String[] names, int[][] grid) {}
+    record Blob(byte[] data) {}
+
     static <T> T roundtrip(Object o, Class<T> type) throws IOException {
         var b = new ByteArrayOutputStream();
         EvoMap.writeObject(b, o);
@@ -58,6 +61,33 @@ public class EvoMapTest {
         var p = new Point(3, 4, "corner");
         Point r = roundtrip(p, Point.class);
         assertTrue(r.x == 3 && r.y == 4 && "corner".equals(r.label), "pojo fields");
+    }
+
+    static class Base { int a; String b; Base() {} }
+    static class Derived extends Base { String c; Derived() {} }
+
+    @Test
+    void testPojoInheritance() throws IOException {
+        var d = new Derived();
+        d.a = 5; d.b = "base"; d.c = "derived";
+        var r = roundtrip(d, Derived.class);
+        assertTrue(r.a == 5, "inherited int field survives");
+        assertTrue("base".equals(r.b), "inherited String field survives");
+        assertTrue("derived".equals(r.c), "own field survives");
+    }
+
+    static class ShadowBase { String v; ShadowBase() {} }
+    static class ShadowSub extends ShadowBase { String v; ShadowSub() {} }  // hides ShadowBase.v (same name+type)
+
+    @Test
+    void testPojoShadowedFieldSubclassWins() throws Exception {
+        var s = new ShadowSub();
+        s.v = "sub";                                              // subclass field
+        var hidden = ShadowBase.class.getDeclaredField("v");      // hidden superclass field
+        hidden.setAccessible(true);
+        hidden.set(s, "base");
+        var r = roundtrip(s, ShadowSub.class);
+        assertTrue("sub".equals(r.v), "subclass field wins on same-name shadowing (ADR-0007)");
     }
 
     @Test
@@ -104,6 +134,46 @@ public class EvoMapTest {
     }
 
     @Test
+    void testArrayFields() throws IOException {
+        var a = new Arrays1(new int[]{1, 2, 3}, new String[]{"a", "b"}, new int[][]{{1, 2}, {3}});
+        var r = roundtrip(a, Arrays1.class);
+        assertTrue(java.util.Arrays.equals(r.xs(), new int[]{1, 2, 3}), "int[] survives");
+        assertTrue(java.util.Arrays.equals(r.names(), new String[]{"a", "b"}), "String[] survives");
+        assertTrue(java.util.Arrays.deepEquals(r.grid(), new int[][]{{1, 2}, {3}}), "int[][] survives");
+    }
+
+    @Test
+    void testByteArrayStaysBytes() throws IOException {
+        var b = new ByteArrayOutputStream();
+        EvoMap.writeObject(b, new Blob(new byte[]{9, 8, 7}));
+        // The wire is a MAP {data: <value>}; the value MUST be byte[] (BYTES),
+        // not a List (LIST) — the ADR-0005 carve-out.
+        Object wire = Evo.read(new ByteArrayInputStream(b.toByteArray()));
+        Object data = ((Map<?, ?>) wire).get("data");
+        assertTrue(data instanceof byte[], "byte[] field must stay BYTES, not become a LIST");
+        var r = roundtrip(new Blob(new byte[]{9, 8, 7}), Blob.class);
+        assertTrue(java.util.Arrays.equals(r.data(), new byte[]{9, 8, 7}), "byte[] round-trips");
+    }
+
+    record GenHolder(List<Person>[] groups, Map<String, Person>[] byCity) {}
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testArrayOfParameterizedTypes() throws IOException {
+        Person ada = new Person(1, "Ada", Color.RED, new Address("London", 1));
+        Person bob = new Person(2, "Bob", Color.BLUE, new Address("Paris", 2));
+        List<Person>[] groups = new List[]{ List.of(ada), List.of(bob) };
+        Map<String, Person>[] byCity = new Map[]{ Map.of("london", ada) };
+        var r = roundtrip(new GenHolder(groups, byCity), GenHolder.class);
+        Object firstElem = r.groups()[0].get(0);
+        assertTrue(firstElem instanceof Person, "List<Person>[] element must decode as Person, not Map");
+        assertTrue(((Person) firstElem).name().equals("Ada"), "generic-array element value survives");
+        Object mapVal = r.byCity()[0].get("london");
+        assertTrue(mapVal instanceof Person, "Map<String,Person>[] value must decode as Person");
+        assertTrue(((Person) mapVal).name().equals("Ada"), "map-in-array value survives");
+    }
+
+    @Test
     void testFileHelpers(@TempDir Path dir) throws IOException {
         var team = new Team(
             "core",
@@ -115,5 +185,20 @@ public class EvoMapTest {
         assertTrue(r.name().equals("core"), "file round-trip name");
         assertTrue(r.members().get(0).name().equals("A"), "file round-trip nested");
         assertTrue(r.offices().get("hq").city().equals("SF"), "file round-trip map");
+    }
+
+    record HasUuid(java.util.UUID id) {}
+
+    @Test
+    void testUnsupportedTypeThrowsCleanly() throws IOException {
+        boolean cleanIae = false;
+        try {
+            var b = new ByteArrayOutputStream();
+            EvoMap.writeObject(b, new HasUuid(java.util.UUID.randomUUID()));
+        } catch (IllegalArgumentException e) {
+            cleanIae = e.getMessage() != null && e.getMessage().contains("UUID");
+        }
+        assertTrue(cleanIae,
+            "unsupported type must throw IllegalArgumentException naming the class, not InaccessibleObjectException");
     }
 }

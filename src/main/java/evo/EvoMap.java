@@ -32,8 +32,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <h2>Limits (by design)</h2>
  * No polymorphism (a field decodes as its declared type), no cyclic object
- * graphs, declared fields only (no inherited POJO fields), and raw/wildcard
- * generics decode as plain codec values. See {@code docs/adding-types.md}.
+ * graphs, and raw/wildcard generics decode as plain codec values. POJO fields
+ * are collected by walking the superclass chain (subclass-wins on shadowing;
+ * see ADR-0007). See {@code docs/adding-types.md}.
  *
  * <h2>Usage</h2>
  * <pre>
@@ -52,6 +53,10 @@ public final class EvoMap {
     private static final Map<Class<?>, RecordComponent[]> RECORD_COMPONENTS = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Field[]> POJO_FIELDS = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Constructor<?>> CONSTRUCTORS = new ConcurrentHashMap<>();
+    // Cached "has a no-arg constructor" predicate for the POJO write guard: the
+    // readability precondition (ADR-0008) is checked once per class, not per
+    // write, keeping the serialize hot path off an uncached reflective lookup.
+    private static final Map<Class<?>, Boolean> POJO_WRITABLE = new ConcurrentHashMap<>();
 
     /**
      * Serialize {@code obj} by converting it to the codec value tree
@@ -106,15 +111,21 @@ public final class EvoMap {
         return RECORD_COMPONENTS.computeIfAbsent(c, Class::getRecordComponents);
     }
 
-    /** Cached, access-enabled declared instance fields of a POJO class (static/transient excluded). */
+    /** Cached, access-enabled instance fields of a POJO class, walking the
+     *  superclass chain (subclass-wins on same-name shadowing; static/transient
+     *  excluded). See ADR-0007. */
     private static Field[] fields(Class<?> c) {
         return POJO_FIELDS.computeIfAbsent(c, k -> {
             var list = new ArrayList<Field>();
-            for (Field f : k.getDeclaredFields()) {
-                int m = f.getModifiers();
-                if (Modifier.isStatic(m) || Modifier.isTransient(m)) continue;
-                f.setAccessible(true);
-                list.add(f);
+            var seen = new HashSet<String>();
+            for (Class<?> t = k; t != null && t != Object.class; t = t.getSuperclass()) {
+                for (Field f : t.getDeclaredFields()) {
+                    int m = f.getModifiers();
+                    if (Modifier.isStatic(m) || Modifier.isTransient(m)) continue;
+                    if (!seen.add(f.getName())) continue;   // subclass already claimed this name
+                    f.setAccessible(true);
+                    list.add(f);
+                }
             }
             return list.toArray(new Field[0]);
         });
@@ -125,12 +136,22 @@ public final class EvoMap {
      * {@code String}, {@code byte[]}, {@code List}, {@code Map}, or {@code null}).
      * Leaves pass through; enums become their name; lists/maps and record/POJO
      * fields recurse. Records and POJOs become a name-keyed {@code LinkedHashMap}.
+     *
+     * @throws IllegalArgumentException if a POJO type is not round-trippable — it
+     *     has no accessible no-arg constructor or has inaccessible fields (e.g.
+     *     {@code java.util.UUID}); the message names the offending class. See ADR-0008.
      */
     static Object toValue(Object o) {
         if (o == null) return null;
         Class<?> c = o.getClass();
         if (isLeaf(c)) return o;
         if (o instanceof Enum<?> e) return e.name();
+        if (c.isArray() && c != byte[].class) {          // ADR-0005: arrays map to LIST; byte[] stays BYTES
+            int n = java.lang.reflect.Array.getLength(o);
+            var out = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) out.add(toValue(java.lang.reflect.Array.get(o, i)));
+            return out;
+        }
         if (o instanceof List<?> l) {
             var out = new ArrayList<>(l.size());
             for (Object e : l) out.add(toValue(e));
@@ -147,10 +168,28 @@ public final class EvoMap {
                 out.put(rc.getName(), toValue(invoke(rc.getAccessor(), o)));
             return out;
         }
-        // POJO: declared, non-static, non-transient fields
-        var out = new LinkedHashMap<String, Object>();
-        for (Field f : fields(c)) out.put(f.getName(), toValue(get(f, o)));
-        return out;
+        // POJO fallback — must be round-trippable: needs a no-arg constructor to
+        // be readable and accessible fields to be writable. Otherwise fail with a
+        // clean, named error instead of an opaque reflection exception or a silent
+        // partial write. See ADR-0008. The no-arg check is cached (POJO_WRITABLE)
+        // so it runs once per class, not per write.
+        if (!POJO_WRITABLE.computeIfAbsent(c, EvoMap::hasNoArgCtor))
+            throw new IllegalArgumentException("cannot map " + c.getName()
+                + "; use a record/List/Map or give it a no-arg constructor with accessible fields");
+        try {
+            var out = new LinkedHashMap<String, Object>();
+            for (Field f : fields(c)) out.put(f.getName(), toValue(get(f, o)));  // fields() setAccessible may throw
+            return out;
+        } catch (InaccessibleObjectException e) {        // inaccessible field — same clean, named error
+            throw new IllegalArgumentException("cannot map " + c.getName()
+                + "; use a record/List/Map or give it a no-arg constructor with accessible fields", e);
+        }
+    }
+
+    /** True if {@code c} has a no-arg constructor (the POJO readability precondition, ADR-0008). */
+    private static boolean hasNoArgCtor(Class<?> c) {
+        try { c.getDeclaredConstructor(); return true; }
+        catch (NoSuchMethodException e) { return false; }
     }
 
     /**
@@ -176,6 +215,16 @@ public final class EvoMap {
             } catch (RuntimeException ex) {
                 throw new IllegalStateException("cannot decode enum " + raw + " from " + v, ex);
             }
+        }
+        if (raw.isArray() && raw != byte[].class) {      // ADR-0005/0009: rebuild array from the wire LIST
+            Type compType = (t instanceof GenericArrayType g)
+                ? g.getGenericComponentType()            // List<Person> — keeps generics
+                : raw.getComponentType();                // int, String, Person — a Class
+            List<?> list = (List<?>) v;
+            Object arr = Array.newInstance(rawClass(compType), list.size());
+            for (int i = 0; i < list.size(); i++)
+                Array.set(arr, i, fromValue(list.get(i), compType));  // pass the generic type, not the erased class
+            return arr;
         }
         if (List.class.isAssignableFrom(raw)) {
             Type et = argOf(t, 0);
@@ -275,12 +324,15 @@ public final class EvoMap {
 
     /**
      * The erased {@link Class} of a reflective {@link Type}: the type itself if
-     * it is a {@code Class}, the raw type of a {@code ParameterizedType}, else
-     * {@code Object.class} (for wildcards, type variables, etc.).
+     * it is a {@code Class}, the raw type of a {@code ParameterizedType}, the
+     * erased array class for a {@code GenericArrayType}, else {@code Object.class}
+     * (for wildcards, type variables, etc.).
      */
     static Class<?> rawClass(Type t) {
         if (t instanceof Class<?> c) return c;
         if (t instanceof ParameterizedType p) return (Class<?>) p.getRawType();
+        if (t instanceof GenericArrayType g)         // e.g. List<Person>[] -> List[].class
+            return Array.newInstance(rawClass(g.getGenericComponentType()), 0).getClass();
         return Object.class;
     }
 
