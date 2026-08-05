@@ -221,9 +221,9 @@ public final class EvoMap {
                 ? g.getGenericComponentType()            // List<Person> — keeps generics
                 : raw.getComponentType();                // int, String, Person — a Class
             List<?> list = (List<?>) v;
-            Object arr = java.lang.reflect.Array.newInstance(rawClass(compType), list.size());
+            Object arr = Array.newInstance(rawClass(compType), list.size());
             for (int i = 0; i < list.size(); i++)
-                java.lang.reflect.Array.set(arr, i, fromValue(list.get(i), compType));  // pass the generic type, not the erased class
+                Array.set(arr, i, fromValue(list.get(i), compType));  // pass the generic type, not the erased class
             return arr;
         }
         if (List.class.isAssignableFrom(raw)) {
@@ -324,8 +324,9 @@ public final class EvoMap {
 
     /**
      * The erased {@link Class} of a reflective {@link Type}: the type itself if
-     * it is a {@code Class}, the raw type of a {@code ParameterizedType}, else
-     * {@code Object.class} (for wildcards, type variables, etc.).
+     * it is a {@code Class}, the raw type of a {@code ParameterizedType}, the
+     * erased array class for a {@code GenericArrayType}, else {@code Object.class}
+     * (for wildcards, type variables, etc.).
      */
     static Class<?> rawClass(Type t) {
         if (t instanceof Class<?> c) return c;

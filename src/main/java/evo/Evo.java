@@ -258,6 +258,9 @@ public final class Evo {
      * ("nesting too deep") rather than a {@link StackOverflowError}, so callers'
      * {@code catch (IOException)} stays in control. See ADR-0004.
      *
+     * <p><b>Buffering:</b> wrap a file/socket {@code in} in a {@link BufferedInputStream}
+     * — the codec reads a byte at a time.
+     *
      * @return the decoded value (may be {@code null}, or an {@link Unknown})
      * @throws EOFException at end of stream
      */
@@ -265,7 +268,7 @@ public final class Evo {
         try {
             return read0(in);
         } catch (StackOverflowError e) {
-            throw new IOException("nesting too deep");
+            throw new IOException("nesting too deep", e);
         }
     }
 
@@ -275,9 +278,6 @@ public final class Evo {
      * when this throws {@link EOFException} at a clean value boundary. A tag
      * whose type id is unrecognized is skipped via its size class and returned
      * as an {@link Unknown} (forward compatibility).
-     *
-     * <p><b>Buffering:</b> wrap a file/socket {@code in} in a
-     * {@link BufferedInputStream} — the codec reads a byte at a time.
      *
      * @return the decoded value (may be {@code null}, or an {@link Unknown})
      * @throws EOFException at end of stream
