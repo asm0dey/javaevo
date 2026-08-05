@@ -467,6 +467,94 @@ git commit -m "fix: reject unmappable POJO types with a clean error at write (AD
 
 ---
 
+### Task 6: Arrays of parameterized types (ADR-0009)
+
+Make `List<Person>[]`, `Map<K,V>[]`, and their nestings round-trip on read. Today they fail opaquely with `IllegalArgumentException: argument type mismatch` because `rawClass` maps a `GenericArrayType` field to `Object.class`, so the ADR-0005 array branch never runs. Read-side type-resolution fix only; write already works. This extends ADR-0005 — do it after Tasks 3 (arrays) and 4 are in.
+
+**Files:**
+- Modify: `src/main/java/evo/EvoMap.java` (`rawClass(Type)`; the `fromValue` array branch)
+- Test: `src/test/java/evo/EvoMapTest.java`
+
+**Interfaces:**
+- Consumes: `java.lang.reflect.GenericArrayType`, `java.lang.reflect.Array` (both covered by `import java.lang.reflect.*;`); existing `rawClass(Type)`, `fromValue(Object, Type)`.
+- Produces: `rawClass` returns the erased array class for a `GenericArrayType`; the `fromValue` array branch reconstructs using the generic component type.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `src/test/java/evo/EvoMapTest.java`. Reuse the existing `Person` record (declared as `record Person(int age, String name, Color color, Address address) {}` at the top of the file); construct it with `new Person(1, "Ada", Color.RED, new Address("London", 1))`.
+
+```java
+    record GenHolder(List<Person>[] groups, Map<String, Person>[] byCity) {}
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testArrayOfParameterizedTypes() throws IOException {
+        Person ada = new Person(1, "Ada", Color.RED, new Address("London", 1));
+        Person bob = new Person(2, "Bob", Color.BLUE, new Address("Paris", 2));
+        List<Person>[] groups = new List[]{ List.of(ada), List.of(bob) };
+        Map<String, Person>[] byCity = new Map[]{ Map.of("london", ada) };
+        var r = roundtrip(new GenHolder(groups, byCity), GenHolder.class);
+        Object firstElem = r.groups()[0].get(0);
+        assertTrue(firstElem instanceof Person, "List<Person>[] element must decode as Person, not Map");
+        assertTrue(((Person) firstElem).name().equals("Ada"), "generic-array element value survives");
+        Object mapVal = r.byCity()[0].get("london");
+        assertTrue(mapVal instanceof Person, "Map<String,Person>[] value must decode as Person");
+        assertTrue(((Person) mapVal).name().equals("Ada"), "map-in-array value survives");
+    }
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `mvn -q test -Dtest=EvoMapTest#testArrayOfParameterizedTypes`
+Expected: FAIL — `readObject` throws `IllegalArgumentException: argument type mismatch` (the raw codec `ArrayList` is handed to the record constructor expecting `List[]`).
+
+- [ ] **Step 3: Handle `GenericArrayType` in `rawClass`**
+
+In `src/main/java/evo/EvoMap.java`, in `rawClass(Type t)`, add a case before the final `return Object.class;`:
+
+```java
+        if (t instanceof GenericArrayType g)         // e.g. List<Person>[] -> List[].class
+            return Array.newInstance(rawClass(g.getGenericComponentType()), 0).getClass();
+```
+
+- [ ] **Step 4: Resolve the generic component type in the `fromValue` array branch**
+
+In `src/main/java/evo/EvoMap.java`, the `fromValue` array branch currently reads the component from the erased class. Replace it so it uses the generic component type when the field is a `GenericArrayType`. The branch becomes:
+
+```java
+        if (raw.isArray() && raw != byte[].class) {      // ADR-0005/0009: rebuild array from the wire LIST
+            Type compType = (t instanceof GenericArrayType g)
+                ? g.getGenericComponentType()            // List<Person> — keeps generics
+                : raw.getComponentType();                // int, String, Person — a Class
+            List<?> list = (List<?>) v;
+            Object arr = Array.newInstance(rawClass(compType), list.size());
+            for (int i = 0; i < list.size(); i++)
+                Array.set(arr, i, fromValue(list.get(i), compType));  // pass the generic type, not the erased class
+            return arr;
+        }
+```
+
+(This is backward-compatible: for a plain `Class` array, `compType` is a `Class` and `rawClass(compType)` returns that class, exactly as before.)
+
+- [ ] **Step 5: Run test to verify it passes**
+
+Run: `mvn -q test -Dtest=EvoMapTest#testArrayOfParameterizedTypes`
+Expected: PASS — elements decode as `Person`.
+
+- [ ] **Step 6: Run the full suite (no regressions on non-generic arrays)**
+
+Run: `mvn -q test`
+Expected: PASS — `testArrayFields` (`int[]`/`String[]`/`int[][]`) and `testByteArrayStaysBytes` still green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/main/java/evo/EvoMap.java src/test/java/evo/EvoMapTest.java
+git commit -m "feat: support arrays of parameterized types on read (ADR-0009)"
+```
+
+---
+
 ## Notes for the implementer
 
 - **Task order matters for EvoMap.** Do Task 3 (arrays) → Task 4 (inheritance) → Task 5 (guard). Task 5's guard wraps the same POJO fallback whose field collection Task 4 changes; doing 4 first keeps the guard reasoning about the flattened field set.

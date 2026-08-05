@@ -41,6 +41,10 @@ decision and its vocabulary travel together.
   …) with a clean `IllegalArgumentException`, instead of opaque
   `InaccessibleObjectException` or silent internal-field mangling. Restores
   write/read symmetry. See [ADR-0008](adr/0008-unsupported-type-write-guard.md).
+- **Generic-array support** — arrays of parameterized types (`List<Person>[]`,
+  `Map<K,V>[]`) round-trip by resolving the `GenericArrayType`'s generic
+  component type on read; without it `rawClass` erases to `Object` and read
+  fails opaquely. See [ADR-0009](adr/0009-generic-array-fields.md).
 - **Superclass field walk** — POJO field collection walks the class hierarchy
   (derived→base, stop at `Object`); subclass-wins on same-name shadowing.
   Without it, inherited fields are silently dropped. See
