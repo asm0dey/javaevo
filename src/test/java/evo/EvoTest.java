@@ -221,4 +221,41 @@ public class EvoTest {
         catch (StackOverflowError e) { cleanIO = false; }
         assertTrue(cleanIO, "deep nesting must throw IOException, not StackOverflowError");
     }
+
+    @Test
+    void testSkipContractConformance() throws IOException {
+        // Every defined type: write [value][sentinel], force the ignorant
+        // size-class-only skip, then the sentinel MUST still parse. If the skip
+        // over/under-consumes, the stream desyncs and the sentinel check fails.
+        String sentinel = "SENTINEL";
+        Object[] conforming = {
+            null, Boolean.FALSE, Boolean.TRUE, 'Z', 3.5f, 1.0d,
+            (byte) 1, (short) 1, 1, 1L, "hi", new byte[]{1, 2, 3}, List.of(1, 2)
+        };
+        for (Object val : conforming) {
+            var b = new ByteArrayOutputStream();
+            Evo.write(b, val);
+            Evo.write(b, sentinel);
+            var in = new ByteArrayInputStream(b.toByteArray());
+            int tag = in.read();
+            Evo.skipUnknown(in, tag);              // ignorant skip
+            Object next = Evo.read(in);
+            assertTrue(sentinel.equals(next),
+                "skip-contract desync for tag 0x" + Integer.toHexString(tag) + " (" + val + ")");
+        }
+
+        // MAP is the ONE grandfathered exception: it frames an entry count, so
+        // the generic class-7 skip (count = values) under-consumes and desyncs.
+        // Safe only because every real reader knows MAP natively. If this ever
+        // starts conforming, MAP framing changed — update ADR-0006.
+        var mb = new ByteArrayOutputStream();
+        Evo.write(mb, Map.of("a", 1));
+        Evo.write(mb, sentinel);
+        var min = new ByteArrayInputStream(mb.toByteArray());
+        int mtag = min.read();
+        Evo.skipUnknown(min, mtag);
+        Object mnext = Evo.read(min);
+        assertTrue(!sentinel.equals(mnext),
+            "MAP must be the sole skip-contract exception; if it now conforms, revisit ADR-0006");
+    }
 }

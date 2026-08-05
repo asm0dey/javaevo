@@ -65,6 +65,16 @@ Tag math: `(6 << 5) | 2 = 0xC2`.
 
 ---
 
+## Skip-contract test (required for every new type)
+
+Add your new type's representative value to `EvoTest#testSkipContractConformance`'s
+`conforming` array. That test forces an ignorant (size-class-only) skip and
+asserts it consumes exactly the right bytes. If your type's framing does not
+match its size class's skip rule, the test fails — which is the point: only MAP
+is a grandfathered exception (it frames an entry count). See ADR-0006.
+
+---
+
 ## Step 3 — Add write + read to `Evo.java`
 
 Add the constant, a `write` branch (before the final `throw`), and a `read`
