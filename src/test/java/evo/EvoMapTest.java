@@ -28,6 +28,9 @@ public class EvoMapTest {
     record V1(int age, String name) {}
     record V2(int age, String name, String email) {}
 
+    record Arrays1(int[] xs, String[] names, int[][] grid) {}
+    record Blob(byte[] data) {}
+
     static <T> T roundtrip(Object o, Class<T> type) throws IOException {
         var b = new ByteArrayOutputStream();
         EvoMap.writeObject(b, o);
@@ -101,6 +104,28 @@ public class EvoMapTest {
         var p = new Person(5, "NoAddr", Color.RED, null);   // null nested record
         Person r = roundtrip(p, Person.class);
         assertTrue(r.address() == null, "null nested object round-trips null");
+    }
+
+    @Test
+    void testArrayFields() throws IOException {
+        var a = new Arrays1(new int[]{1, 2, 3}, new String[]{"a", "b"}, new int[][]{{1, 2}, {3}});
+        var r = roundtrip(a, Arrays1.class);
+        assertTrue(java.util.Arrays.equals(r.xs(), new int[]{1, 2, 3}), "int[] survives");
+        assertTrue(java.util.Arrays.equals(r.names(), new String[]{"a", "b"}), "String[] survives");
+        assertTrue(java.util.Arrays.deepEquals(r.grid(), new int[][]{{1, 2}, {3}}), "int[][] survives");
+    }
+
+    @Test
+    void testByteArrayStaysBytes() throws IOException {
+        var b = new ByteArrayOutputStream();
+        EvoMap.writeObject(b, new Blob(new byte[]{9, 8, 7}));
+        // The wire is a MAP {data: <value>}; the value MUST be byte[] (BYTES),
+        // not a List (LIST) — the ADR-0005 carve-out.
+        Object wire = Evo.read(new ByteArrayInputStream(b.toByteArray()));
+        Object data = ((Map<?, ?>) wire).get("data");
+        assertTrue(data instanceof byte[], "byte[] field must stay BYTES, not become a LIST");
+        var r = roundtrip(new Blob(new byte[]{9, 8, 7}), Blob.class);
+        assertTrue(java.util.Arrays.equals(r.data(), new byte[]{9, 8, 7}), "byte[] round-trips");
     }
 
     @Test

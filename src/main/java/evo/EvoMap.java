@@ -131,6 +131,12 @@ public final class EvoMap {
         Class<?> c = o.getClass();
         if (isLeaf(c)) return o;
         if (o instanceof Enum<?> e) return e.name();
+        if (c.isArray() && c != byte[].class) {          // ADR-0005: arrays map to LIST; byte[] stays BYTES
+            int n = java.lang.reflect.Array.getLength(o);
+            var out = new ArrayList<>(n);
+            for (int i = 0; i < n; i++) out.add(toValue(java.lang.reflect.Array.get(o, i)));
+            return out;
+        }
         if (o instanceof List<?> l) {
             var out = new ArrayList<>(l.size());
             for (Object e : l) out.add(toValue(e));
@@ -176,6 +182,14 @@ public final class EvoMap {
             } catch (RuntimeException ex) {
                 throw new IllegalStateException("cannot decode enum " + raw + " from " + v, ex);
             }
+        }
+        if (raw.isArray() && raw != byte[].class) {      // ADR-0005: rebuild array from the wire LIST
+            Class<?> comp = raw.getComponentType();
+            List<?> list = (List<?>) v;
+            Object arr = java.lang.reflect.Array.newInstance(comp, list.size());
+            for (int i = 0; i < list.size(); i++)
+                java.lang.reflect.Array.set(arr, i, fromValue(list.get(i), comp));  // Array.set unboxes for primitives
+            return arr;
         }
         if (List.class.isAssignableFrom(raw)) {
             Type et = argOf(t, 0);
