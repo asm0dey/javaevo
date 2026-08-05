@@ -63,6 +63,19 @@ public class EvoMapTest {
         assertTrue(r.x == 3 && r.y == 4 && "corner".equals(r.label), "pojo fields");
     }
 
+    static class Base { int a; String b; Base() {} }
+    static class Derived extends Base { String c; Derived() {} }
+
+    @Test
+    void testPojoInheritance() throws IOException {
+        var d = new Derived();
+        d.a = 5; d.b = "base"; d.c = "derived";
+        var r = roundtrip(d, Derived.class);
+        assertTrue(r.a == 5, "inherited int field survives");
+        assertTrue("base".equals(r.b), "inherited String field survives");
+        assertTrue("derived".equals(r.c), "own field survives");
+    }
+
     @Test
     void testNestedCollections() throws IOException {
         var team = new Team(

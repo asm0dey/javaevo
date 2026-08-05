@@ -106,15 +106,21 @@ public final class EvoMap {
         return RECORD_COMPONENTS.computeIfAbsent(c, Class::getRecordComponents);
     }
 
-    /** Cached, access-enabled declared instance fields of a POJO class (static/transient excluded). */
+    /** Cached, access-enabled instance fields of a POJO class, walking the
+     *  superclass chain (subclass-wins on same-name shadowing; static/transient
+     *  excluded). See ADR-0007. */
     private static Field[] fields(Class<?> c) {
         return POJO_FIELDS.computeIfAbsent(c, k -> {
             var list = new ArrayList<Field>();
-            for (Field f : k.getDeclaredFields()) {
-                int m = f.getModifiers();
-                if (Modifier.isStatic(m) || Modifier.isTransient(m)) continue;
-                f.setAccessible(true);
-                list.add(f);
+            var seen = new HashSet<String>();
+            for (Class<?> t = k; t != null && t != Object.class; t = t.getSuperclass()) {
+                for (Field f : t.getDeclaredFields()) {
+                    int m = f.getModifiers();
+                    if (Modifier.isStatic(m) || Modifier.isTransient(m)) continue;
+                    if (!seen.add(f.getName())) continue;   // subclass already claimed this name
+                    f.setAccessible(true);
+                    list.add(f);
+                }
             }
             return list.toArray(new Field[0]);
         });
