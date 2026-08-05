@@ -155,6 +155,24 @@ public class EvoMapTest {
         assertTrue(java.util.Arrays.equals(r.data(), new byte[]{9, 8, 7}), "byte[] round-trips");
     }
 
+    record GenHolder(List<Person>[] groups, Map<String, Person>[] byCity) {}
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void testArrayOfParameterizedTypes() throws IOException {
+        Person ada = new Person(1, "Ada", Color.RED, new Address("London", 1));
+        Person bob = new Person(2, "Bob", Color.BLUE, new Address("Paris", 2));
+        List<Person>[] groups = new List[]{ List.of(ada), List.of(bob) };
+        Map<String, Person>[] byCity = new Map[]{ Map.of("london", ada) };
+        var r = roundtrip(new GenHolder(groups, byCity), GenHolder.class);
+        Object firstElem = r.groups()[0].get(0);
+        assertTrue(firstElem instanceof Person, "List<Person>[] element must decode as Person, not Map");
+        assertTrue(((Person) firstElem).name().equals("Ada"), "generic-array element value survives");
+        Object mapVal = r.byCity()[0].get("london");
+        assertTrue(mapVal instanceof Person, "Map<String,Person>[] value must decode as Person");
+        assertTrue(((Person) mapVal).name().equals("Ada"), "map-in-array value survives");
+    }
+
     @Test
     void testFileHelpers(@TempDir Path dir) throws IOException {
         var team = new Team(

@@ -216,12 +216,14 @@ public final class EvoMap {
                 throw new IllegalStateException("cannot decode enum " + raw + " from " + v, ex);
             }
         }
-        if (raw.isArray() && raw != byte[].class) {      // ADR-0005: rebuild array from the wire LIST
-            Class<?> comp = raw.getComponentType();
+        if (raw.isArray() && raw != byte[].class) {      // ADR-0005/0009: rebuild array from the wire LIST
+            Type compType = (t instanceof GenericArrayType g)
+                ? g.getGenericComponentType()            // List<Person> — keeps generics
+                : raw.getComponentType();                // int, String, Person — a Class
             List<?> list = (List<?>) v;
-            Object arr = java.lang.reflect.Array.newInstance(comp, list.size());
+            Object arr = java.lang.reflect.Array.newInstance(rawClass(compType), list.size());
             for (int i = 0; i < list.size(); i++)
-                java.lang.reflect.Array.set(arr, i, fromValue(list.get(i), comp));  // Array.set unboxes for primitives
+                java.lang.reflect.Array.set(arr, i, fromValue(list.get(i), compType));  // pass the generic type, not the erased class
             return arr;
         }
         if (List.class.isAssignableFrom(raw)) {
@@ -328,6 +330,8 @@ public final class EvoMap {
     static Class<?> rawClass(Type t) {
         if (t instanceof Class<?> c) return c;
         if (t instanceof ParameterizedType p) return (Class<?>) p.getRawType();
+        if (t instanceof GenericArrayType g)         // e.g. List<Person>[] -> List[].class
+            return Array.newInstance(rawClass(g.getGenericComponentType()), 0).getClass();
         return Object.class;
     }
 
