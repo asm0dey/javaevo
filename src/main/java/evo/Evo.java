@@ -249,6 +249,28 @@ public final class Evo {
 
     /**
      * Read one value written by {@link #write}, returning the exact Java type
+     * that was written. Loop until this throws {@link EOFException} at a clean
+     * value boundary. A tag whose type id is unrecognized is skipped via its size
+     * class and returned as an {@link Unknown} (forward compatibility).
+     *
+     * <p>A pathologically or maliciously deep nesting of LIST/MAP would exhaust
+     * the JVM stack; that is caught here and surfaced as an {@link IOException}
+     * ("nesting too deep") rather than a {@link StackOverflowError}, so callers'
+     * {@code catch (IOException)} stays in control. See ADR-0004.
+     *
+     * @return the decoded value (may be {@code null}, or an {@link Unknown})
+     * @throws EOFException at end of stream
+     */
+    public static Object read(InputStream in) throws IOException {
+        try {
+            return read0(in);
+        } catch (StackOverflowError e) {
+            throw new IOException("nesting too deep");
+        }
+    }
+
+    /**
+     * Read one value written by {@link #write}, returning the exact Java type
      * that was written. Call in a loop to read a stream of values; the loop ends
      * when this throws {@link EOFException} at a clean value boundary. A tag
      * whose type id is unrecognized is skipped via its size class and returned
@@ -260,7 +282,7 @@ public final class Evo {
      * @return the decoded value (may be {@code null}, or an {@link Unknown})
      * @throws EOFException at end of stream
      */
-    public static Object read(InputStream in) throws IOException {
+    static Object read0(InputStream in) throws IOException {
         int tag = in.read();
         if (tag < 0) throw new EOFException();
         switch (tag) {
@@ -279,15 +301,15 @@ public final class Evo {
             case LIST: {
                 int n = readLen(in);
                 var l = new ArrayList<Object>();
-                for (int i = 0; i < n; i++) l.add(read(in));
+                for (int i = 0; i < n; i++) l.add(read0(in));
                 return l;
             }
             case MAP: {
                 int n = readLen(in);
                 var m = new LinkedHashMap<Object, Object>();
                 for (int i = 0; i < n; i++) {
-                    Object k = read(in);
-                    Object val = read(in);
+                    Object k = read0(in);
+                    Object val = read0(in);
                     m.put(k, val);
                 }
                 return m;
@@ -316,7 +338,7 @@ public final class Evo {
             case 4: raw.writeBytes(readN(in, 8)); break;
             case 5: { int x; do { x = read1(in); raw.write(x); } while ((x & 0x80) != 0); } break;
             case 6: { int n = readLen(in); raw.writeBytes(readN(in, n)); } break;
-            case 7: { int n = readLen(in); for (long i = 0; i < n; i++) read(in); } break;
+            case 7: { int n = readLen(in); for (long i = 0; i < n; i++) read0(in); } break;
             default: throw new IOException("bad size class " + cls);
         }
         return new Unknown(tag, raw.toByteArray());

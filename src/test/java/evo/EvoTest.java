@@ -207,4 +207,18 @@ public class EvoTest {
         try { Evo.readVarint(in); } catch (IOException e) { threw = true; }
         assertTrue(threw, "oversized varint rejected");
     }
+
+    @Test
+    void testDeepNestingThrowsIOException() {
+        // 100k nested LISTs (E0 01 = LIST, count 1), innermost NULL.
+        var b = new ByteArrayOutputStream();
+        for (int i = 0; i < 100_000; i++) { b.write(0xE0); b.write(0x01); }
+        b.write(0x00);
+        var in = new ByteArrayInputStream(b.toByteArray());
+        boolean cleanIO = false;
+        try { Evo.read(in); }
+        catch (IOException e) { cleanIO = true; }
+        catch (StackOverflowError e) { cleanIO = false; }
+        assertTrue(cleanIO, "deep nesting must throw IOException, not StackOverflowError");
+    }
 }
