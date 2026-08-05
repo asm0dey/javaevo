@@ -76,6 +76,20 @@ public class EvoMapTest {
         assertTrue("derived".equals(r.c), "own field survives");
     }
 
+    static class ShadowBase { String v; ShadowBase() {} }
+    static class ShadowSub extends ShadowBase { String v; ShadowSub() {} }  // hides ShadowBase.v (same name+type)
+
+    @Test
+    void testPojoShadowedFieldSubclassWins() throws Exception {
+        var s = new ShadowSub();
+        s.v = "sub";                                              // subclass field
+        var hidden = ShadowBase.class.getDeclaredField("v");      // hidden superclass field
+        hidden.setAccessible(true);
+        hidden.set(s, "base");
+        var r = roundtrip(s, ShadowSub.class);
+        assertTrue("sub".equals(r.v), "subclass field wins on same-name shadowing (ADR-0007)");
+    }
+
     @Test
     void testNestedCollections() throws IOException {
         var team = new Team(

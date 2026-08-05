@@ -32,8 +32,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <h2>Limits (by design)</h2>
  * No polymorphism (a field decodes as its declared type), no cyclic object
- * graphs, declared fields only (no inherited POJO fields), and raw/wildcard
- * generics decode as plain codec values. See {@code docs/adding-types.md}.
+ * graphs, and raw/wildcard generics decode as plain codec values. POJO fields
+ * are collected by walking the superclass chain (subclass-wins on shadowing;
+ * see ADR-0007). See {@code docs/adding-types.md}.
  *
  * <h2>Usage</h2>
  * <pre>
