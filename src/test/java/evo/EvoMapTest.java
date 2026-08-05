@@ -168,4 +168,19 @@ public class EvoMapTest {
         assertTrue(r.members().get(0).name().equals("A"), "file round-trip nested");
         assertTrue(r.offices().get("hq").city().equals("SF"), "file round-trip map");
     }
+
+    record HasUuid(java.util.UUID id) {}
+
+    @Test
+    void testUnsupportedTypeThrowsCleanly() throws IOException {
+        boolean cleanIae = false;
+        try {
+            var b = new ByteArrayOutputStream();
+            EvoMap.writeObject(b, new HasUuid(java.util.UUID.randomUUID()));
+        } catch (IllegalArgumentException e) {
+            cleanIae = e.getMessage() != null && e.getMessage().contains("UUID");
+        }
+        assertTrue(cleanIae,
+            "unsupported type must throw IllegalArgumentException naming the class, not InaccessibleObjectException");
+    }
 }

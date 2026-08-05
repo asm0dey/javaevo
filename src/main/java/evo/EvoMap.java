@@ -160,10 +160,19 @@ public final class EvoMap {
                 out.put(rc.getName(), toValue(invoke(rc.getAccessor(), o)));
             return out;
         }
-        // POJO: declared, non-static, non-transient fields
-        var out = new LinkedHashMap<String, Object>();
-        for (Field f : fields(c)) out.put(f.getName(), toValue(get(f, o)));
-        return out;
+        // POJO fallback — must be round-trippable: needs a no-arg constructor to
+        // be readable and accessible fields to be writable. Otherwise fail with a
+        // clean, named error instead of an opaque reflection exception or a silent
+        // partial write. See ADR-0008.
+        try {
+            c.getDeclaredConstructor();                  // present? (readability precondition)
+            var out = new LinkedHashMap<String, Object>();
+            for (Field f : fields(c)) out.put(f.getName(), toValue(get(f, o)));  // fields() setAccessible may throw
+            return out;
+        } catch (NoSuchMethodException | InaccessibleObjectException e) {
+            throw new IllegalArgumentException("cannot map " + c.getName()
+                + "; use a record/List/Map or give it a no-arg constructor with accessible fields", e);
+        }
     }
 
     /**
