@@ -23,10 +23,16 @@ Buffered file convenience:
     EvoMap.writeToFile(path, person);
     Person p = EvoMap.readFromFile(path, Person.class);
 
-**Buffering:** the codec does byte-at-a-time IO. Wrap file/socket streams in
-`BufferedOutputStream`/`BufferedInputStream` (the `*File` helpers above already
-do). In-memory `ByteArrayOutputStream` needs nothing. Unbuffered file IO is
-~10× slower — see `benchmark/`.
+In-memory bytes (≈2.5× faster than wrapping them in a `ByteArrayInputStream`):
+
+    Object v = Evo.read(bytes);
+    Person p = EvoMap.readObject(bytes, Person.class);
+
+**Buffering:** writes need none — each value is encoded into an internal
+buffer and written in one call. Stream reads are byte-at-a-time, and JDK
+streams lock on every `read()`: wrap file/socket streams in
+`BufferedInputStream`, and prefer the `byte[]` overloads (or `readFromFile`)
+when you can — see `benchmark/`.
 
 See `docs/format-spec.md` for the wire format with byte-layout diagrams, and
 `docs/superpowers/specs/2026-08-04-binary-format-design.md` for the design and

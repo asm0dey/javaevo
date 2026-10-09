@@ -43,6 +43,26 @@ public class EvoTest {
     }
 
     @Test
+    void testReadFromBytes() throws IOException {
+        var v = new LinkedHashMap<Object, Object>();
+        v.put("s", "héllo");
+        v.put("l", List.of(1L, -2, 3.5, 'c'));
+        v.put("x", null);
+        var b = new ByteArrayOutputStream();
+        Evo.write(b, v);
+        Evo.write(b, 42);                                // trailing value: ignored by read(byte[])
+        byte[] bytes = b.toByteArray();
+        assertTrue(Evo.read(bytes).toString().equals(Evo.read(new ByteArrayInputStream(bytes)).toString()),
+            "byte[] read matches stream read");
+        boolean eof = false;
+        try { Evo.read(new byte[0]); } catch (EOFException e) { eof = true; }
+        assertTrue(eof, "empty array -> EOFException");
+        eof = false;
+        try { Evo.read(Arrays.copyOf(bytes, 5)); } catch (EOFException e) { eof = true; }
+        assertTrue(eof, "truncated array -> EOFException");
+    }
+
+    @Test
     void testScalars() throws IOException {
         assertTrue(roundtrip(null) == null, "null");
         assertTrue(roundtrip(true).equals(true), "true");

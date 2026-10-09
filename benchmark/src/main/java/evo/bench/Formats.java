@@ -29,7 +29,7 @@ import java.io.*;
 public final class Formats {
     private Formats() {}
 
-    public enum Fmt { evo, evostream, java, json, cbor, kryo }
+    public enum Fmt { evo, evobytes, evostream, java, json, cbor, kryo }
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final ObjectMapper CBOR = new ObjectMapper(new CBORFactory());
@@ -45,6 +45,11 @@ public final class Formats {
     public static byte[] serialize(Fmt f, Session s) throws Exception {
         switch (f) {
             case evo: {
+                var b = new ByteArrayOutputStream();
+                EvoMap.writeObject(b, s);
+                return b.toByteArray();
+            }
+            case evobytes: {
                 var b = new ByteArrayOutputStream();
                 EvoMap.writeObject(b, s);
                 return b.toByteArray();
@@ -75,6 +80,7 @@ public final class Formats {
     public static Session deserialize(Fmt f, byte[] data) throws Exception {
         switch (f) {
             case evo:  return EvoMap.readObject(new ByteArrayInputStream(data), Session.class);
+            case evobytes: return EvoMap.readObject(data, Session.class);
             case evostream: return StreamingMapper.readObject(new ByteArrayInputStream(data), Session.class);
             case java: {
                 try (var in = new ObjectInputStream(new ByteArrayInputStream(data))) {

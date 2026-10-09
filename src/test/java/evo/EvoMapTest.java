@@ -187,6 +187,17 @@ public class EvoMapTest {
         assertTrue(r.offices().get("hq").city().equals("SF"), "file round-trip map");
     }
 
+    @Test
+    void testReadObjectFromBytes() throws IOException {
+        var team = new Team("core",
+            List.of(new Person(1, "A", Color.RED, new Address("NYC", 1))),
+            Map.of("hq", new Address("SF", 3)));
+        var b = new ByteArrayOutputStream();
+        EvoMap.writeObject(b, team);
+        Team r = EvoMap.readObject(b.toByteArray(), Team.class);
+        assertTrue(r.equals(team), "byte[] round-trip");
+    }
+
     record HasUuid(java.util.UUID id) {}
 
     @Test
