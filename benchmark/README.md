@@ -39,8 +39,9 @@ Payload: a JaCoCo-ish `Session` of `nClasses` `ClassData` records, each with a
 > The numbers below are from *before* the fold, when `baseline` was uncached.
 
 **Buffering** (`FileBench`, real temp file): baseline strategy, `@Param buffered`
-∈ {false, true}. This is where buffering matters — the codec does byte-at-a-time
-IO, so an unbuffered `FileOutputStream` pays a syscall per byte.
+∈ {false, true}. Reads are byte-at-a-time, so an unbuffered `FileInputStream`
+pays a syscall per byte. Writes no longer care: `Evo.write` hands the stream
+one bulk write per value.
 
 ## Indicative results
 
@@ -58,8 +59,10 @@ are wide at this setting — treat as directional, not precise.** Lower is bette
 
 | Benchmark | unbuffered | buffered |
 |---|--:|--:|
-| writeFile | 1670 µs | 731 µs (**2.3×**) |
-| readFile  | 1130 µs | 305 µs (**3.7×**) |
+| writeFile | 63 µs | 63 µs (no difference since the internal write buffer) |
+| readFile  | 1614 µs | 170 µs (**9.5×**) |
+
+JDK 26, 2026-10-09. (`specialized` still writes per byte: 2683 µs unbuffered.)
 
 ## Reading of the results
 
@@ -92,23 +95,36 @@ category). Same 200×64 payload, short run, JDK 21.
 | **evo** | **26,538** | **3,325** |
 | json | 33,205 | 4,219 |
 
-**Speed** (µs/op, lower is better):
+**Speed** (µs/op, lower is better). JDK 26, `-f 2 -wi 3 -i 5`, 2026-10-09:
 
 | format | serialize | deserialize |
 |---|--:|--:|
-| kryo | 24 | 14 |
-| cbor | 18 | 36 |
-| json | 34 | 39 |
-| java native | 38 | 55 |
-| **evostream** (prototype) | **57** | **84** |
-| **evo** | **89** | **106** |
+| kryo | 36 | 20 |
+| cbor | 29 | 63 |
+| json | 57 | 67 |
+| java native | 55 | 89 |
+| **evo** (`readObject(byte[])`) | **57** | **65** |
+| **evo** (`readObject(InputStream)`) | **57** | **166** |
+| evostream (prototype) | 95 | 139 |
 
-**Reading:** evo is the *slowest* here — ~3–5× behind Jackson-CBOR/Kryo, and
-slower than Java native. Its cost is the intermediate `Map<String,Object>` tree
-(`toValue` allocates + boxes, then serializes) plus `instanceof`-chain dispatch
-and byte-at-a-time IO; Jackson/Kryo stream object→bytes with cached serializers.
-On size, evo ≈ CBOR (both self-describing, field names repeated); Kryo is
-smallest, JSON largest; gzip nearly equalizes evo/cbor/java.
+**Reading:** evo now matches JSON/Java native on write and CBOR/JSON on read,
+still ~2× behind CBOR on write and ~3× behind Kryo on read.
+
+**Where the time went (async-profiler, 2026-10-09):** before the fix, 73% of
+serialize was `ByteArrayOutputStream.write(int)` and ~85% of deserialize was
+`ByteArrayInputStream.read()`. Both take a lock per call, the codec makes one
+call per byte, and `BufferedOutputStream`/`BufferedInputStream` lock the same
+way (~25 ns/byte either way). It was not the value tree, and not the wire
+format: CBOR repeats field names too. Fixes, with no wire or API break:
+
+- `Evo.write` encodes into a private unsynchronized buffer, then does one bulk
+  write: serialize 143 → 57 µs for every caller and every stream.
+- `Evo.read(byte[])` / `EvoMap.readObject(byte[], Class)` parse through an
+  unsynchronized cursor: deserialize 166 → 65 µs. `readFromFile` uses it.
+  `read(InputStream)` cannot read ahead (the bytes after a value belong to the
+  caller), so it still pays the lock per byte.
+
+The `evo`/`evobytes` rows in `FormatBench` are the stream and `byte[]` paths.
 
 ### Streaming-serializer prototype (`StreamingMapper`)
 
@@ -116,19 +132,15 @@ smallest, JSON largest; gzip nearly equalizes evo/cbor/java.
 cached field-name bytes, `MethodHandle` no-box field access, **no intermediate
 Map tree**. It emits byte-identical output to `EvoMap`.
 
-It buys a real **1.3–1.6×** (serialize 89→57, deserialize 106→84) — but is
-**still the slowest of the pack**. The floor is not the implementation, it is
-the **wire format**: self-describing means the field names are repeated for
-every instance (200×4 here), while native/Jackson write the schema/descriptor
-once. Removing that cost means going positional (no names) — which sacrifices
-schema evolution, evo's entire reason to exist.
+It was measured before the stream-locking fix above, and now loses to plain
+`EvoMap` (it still writes through the locked `ByteArrayOutputStream` per byte).
+The earlier claim that the wire format set evo's speed floor was wrong: the
+floor was per-byte stream locking.
 
-**Conclusion — do not graduate it into the library.** The win is modest, evo
-stays slowest regardless, and a general compiled-serializer engine (POJOs, all
-types, enums, nested collections) is a large amount of code that defeats the
-"~2 files, tiny" goal. If you need speed, use CBOR/Kryo. evo's lane is
-zero-dep + tiny + evolution, not throughput. The prototype stays here as
-evidence.
+**Conclusion — do not graduate it into the library.** A general
+compiled-serializer engine (POJOs, all types, enums, nested collections) is a
+large amount of code that defeats the "~2 files, tiny" goal. The prototype
+stays here as evidence.
 
 evo's value is **not** speed or size — it is ~2 files, zero dependencies, schema
 evolution, and all Java types in one small package. Choose it when those matter
